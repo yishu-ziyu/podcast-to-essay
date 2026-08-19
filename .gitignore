@@ -1,0 +1,31 @@
+# audio / video
+*.mp3
+*.wav
+*.m4a
+*.flac
+*.ogg
+*.aac
+*.webm
+*.mp4
+*.mov
+
+# ASR scratch
+raw/**/chunks/
+raw/**/source.*
+
+# web
+web/node_modules/
+web/dist/
+web/out/
+
+# secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+**/.DS_Store
+*.log
+.idea/
+.vscode/
