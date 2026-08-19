@@ -68,8 +68,10 @@ export function slugFromUrl(raw: string, taken: string[]) {
 export function displayName(ep: Episode) {
   if (ep.title) return ep.title;
   if (ep.originalName) return ep.originalName.replace(/\.[^.]+$/, '');
-  const m = ep.slug.match(/^\d{4}-\d{2}-\d{2}-(.+)$/);
-  return m ? m[1].replace(/-/g, ' ') : ep.slug;
+  if (ep.source && !/^source\.[^.]+$/i.test(ep.source)) {
+    return ep.source.replace(/\.[^.]+$/, '');
+  }
+  return '未命名音轨';
 }
 
 export function displayDate(ep: Episode) {

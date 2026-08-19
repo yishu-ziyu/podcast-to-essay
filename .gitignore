@@ -13,6 +13,10 @@
 raw/**/chunks/
 raw/**/source.*
 raw/**/.yt-title.txt
+raw/**/transcription-state.json
+.ingests/
+.playwright-mcp/
+.superdesign/
 
 # web
 web/node_modules/

@@ -10,8 +10,19 @@ export interface Episode {
   hasRaw: boolean;
   hasSrt: boolean;
   chunkCount: number;
+  completedChunks: number;
+  transcription: {
+    state: 'running' | 'paused' | 'failed';
+    error: string | null;
+  } | null;
   cleaned: boolean;
   cleanedAt: number | null;
+  article: {
+    provider: string;
+    model: string;
+    generatedAt: string;
+    stats: { chars: number; paragraphs: number; headings: number };
+  } | null;
   status: EpisodeStatus;
 }
 
@@ -20,6 +31,12 @@ const API = '/api';
 export interface TranscribeHandlers {
   onLog: (line: string) => void;
   onDone: (code: number) => void;
+}
+
+export interface IngestHandlers {
+  onProgress: (message: string) => void;
+  onReady: (episode: { slug: string; title: string }) => void;
+  onFailed: (message: string) => void;
 }
 
 async function json<T>(r: Response): Promise<T> {
@@ -46,6 +63,14 @@ export async function createEpisode(slug: string): Promise<void> {
 
 export async function deleteEpisode(slug: string): Promise<void> {
   await fetch(`${API}/episodes/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+}
+
+export async function updateEpisodeTitle(slug: string, title: string): Promise<void> {
+  await json(await fetch(`${API}/episodes/${encodeURIComponent(slug)}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title }),
+  }));
 }
 
 const AUDIO_EXT: Record<string, string> = {
@@ -96,8 +121,8 @@ export async function uploadAudio(slug: string, file: File): Promise<void> {
   }
 }
 
-export function ingestUrlStream(slug: string, url: string, h: TranscribeHandlers): void {
-  fetch(`${API}/episodes/${encodeURIComponent(slug)}/from-url`, {
+export function ingestUrlStream(url: string, h: IngestHandlers): void {
+  fetch(`${API}/ingests`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ url }),
@@ -107,7 +132,7 @@ export function ingestUrlStream(slug: string, url: string, h: TranscribeHandlers
         const e = await r.json().catch(() => ({}));
         throw new Error((e as { error?: string }).error || `HTTP ${r.status}`);
       }
-      if (!r.body) { h.onDone(1); return; }
+      if (!r.body) { h.onFailed('没有收到下载进度'); return; }
       const reader = r.body.getReader();
       const decoder = new TextDecoder();
       let buf = '';
@@ -122,22 +147,24 @@ export function ingestUrlStream(slug: string, url: string, h: TranscribeHandlers
           while ((idx = buf.indexOf('\n\n')) >= 0) {
             const chunk = buf.slice(0, idx);
             buf = buf.slice(idx + 2);
-            let event = 'log';
+            let event = 'progress';
             const dataLines: string[] = [];
             for (const line of chunk.split('\n')) {
               if (line.startsWith('event:')) event = line.slice(6).trim();
               else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
             }
             const text = dataLines.join('\n');
-            if (event === 'done') h.onDone(Number(text) || 0);
-            else h.onLog(text);
+            const data = JSON.parse(text) as { message?: string; slug?: string; title?: string };
+            if (event === 'ready' && data.slug && data.title) h.onReady({ slug: data.slug, title: data.title });
+            else if (event === 'failed') h.onFailed(data.message || '没有拿到可转录的音频');
+            else if (event === 'progress') h.onProgress(data.message || '正在准备音轨…');
           }
           pump();
         });
       };
       pump();
     })
-    .catch((e) => { h.onLog('❌ ' + e.message); h.onDone(1); });
+    .catch(() => { h.onFailed('网络没有连上下载服务，请重试。'); });
 }
 
 export async function getTranscript(slug: string, type: 'raw' | 'srt' | 'cleaned'): Promise<string> {
@@ -146,15 +173,26 @@ export async function getTranscript(slug: string, type: 'raw' | 'srt' | 'cleaned
   return r.text();
 }
 
-export async function cleanEpisode(slug: string): Promise<{ method: string }> {
+export async function cleanEpisode(slug: string): Promise<{ method: string; provider: string; model: string }> {
   const r = await fetch(`${API}/episodes/${encodeURIComponent(slug)}/clean`, { method: 'POST' });
-  return json<{ ok: boolean; file: string; method: string }>(r);
+  return json<{ ok: boolean; method: string; provider: string; model: string }>(r);
+}
+
+export async function controlTranscription(slug: string, action: 'pause' | 'resume'): Promise<{ paused: boolean }> {
+  return json<{ ok: boolean; paused: boolean }>(await fetch(
+    `${API}/episodes/${encodeURIComponent(slug)}/transcription/${action}`,
+    { method: 'POST' },
+  ));
 }
 
 // POST with SSE log streaming (fetch + ReadableStream reader).
 export function transcribeStream(slug: string, h: TranscribeHandlers): void {
   fetch(`${API}/episodes/${encodeURIComponent(slug)}/transcribe`, { method: 'POST' })
-    .then((r) => {
+    .then(async (r) => {
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        throw new Error((e as { error?: string }).error || '转录没有开始');
+      }
       if (!r.body) { h.onDone(1); return; }
       const reader = r.body.getReader();
       const decoder = new TextDecoder();

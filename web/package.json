@@ -8,6 +8,7 @@
     "dev": "node scripts/dev.mjs",
     "dev:web": "vite",
     "server": "node server/index.mjs",
+    "test": "node --test server/*.test.mjs",
     "build": "vite build",
     "electron": "electron .",
     "electron:dev": "IS_DEV=1 electron .",

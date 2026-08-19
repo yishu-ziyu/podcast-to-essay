@@ -14,7 +14,7 @@ podcast-to-essay/web/
 ```
 
 - **前端**：React 18 + Vite + TypeScript，运行在 `:5173`。
-- **后端**：纯 Node `http`，无外部依赖，运行在 `:8787`，直接读写仓库的 `raw/<slug>/` 与 `cleaned/<slug>.md`，并调用外部 ASR 引擎 `~/.claude/skills/asr-transcript-refinement/`。
+- **后端**：纯 Node `http`，运行在 `:8787`，直接读写仓库的 `raw/<slug>/` 与 `cleaned/<slug>.md`，并直接调用 StepFun ASR。
 - **Electron**：`main.cjs` 负责拉起后端（dev 再拉起 vite），dev 加载 `:5173`，prod 加载 `:8787`（后端同时托管 `dist/`）。
 
 ## 数据流（对应原 CLI 流水线）
@@ -22,22 +22,16 @@ podcast-to-essay/web/
 1. 新建期次 → `raw/<slug>/` 下生成 `transcribe.sh`（引擎路径已注入）。
 2. 上传音频 → 保存为 `raw/<slug>/source.<ext>`。
 3. 开始转录 → 后端 `spawn bash transcribe.sh`：ffmpeg 切块 → Stepfun ASR → merge，日志以 **SSE** 实时回传。
-4. 查看转录稿 → `asr_raw.txt` / `asr_raw.srt` / `cleaned/<slug>.md` 三标签切换。
-5. ✨ 清洗 → **混元 AI**（设置 `HUNYUAN_API_KEY` 时）自动修正错字 + 合并段落 + 保留说话人标签；无 Key 时自动降级为启发式清洗。
+4. 查看内容 → 文章 / 初稿 / 分段稿三种版本切换；分段稿是约 3 分钟一段的核对材料，不冒充可发布字幕。
+5. 整理成文 → 通过 Step Plan 的 `step-3.7-flash` 将完整初稿改写为结构化文章。模型未配置、调用失败或结果未通过结构校验时不会写入 `cleaned/`，也不会把启发式结果标成文章。
 
 ## 前置条件
 
 - Node ≥ 18（开发用 v22）
 - `ffmpeg`（在 PATH 中）
-- `python3` + `requests`（ASR 引擎依赖）
-- 环境变量 `STEP_API_KEY`（云端 Stepfun ASR）
-- （可选）环境变量 `HUNYUAN_API_KEY` — **混元 AI 清洗**，不设则自动降级为离线启发式清洗
-- 外部引擎：`~/.claude/skills/asr-transcript-refinement/`
-
-### 获取混元 API Key（推荐，免费 100万 tokens）
-1. 访问 [腾讯云控制台 → 混元大模型](https://console.cloud.tencent.com/hunyuan/settings) 开通服务
-2. 在 [API 密钥管理](https://console.cloud.tencent.com/hunyuan/start) 创建 OpenAI 兼容 Key（以 `sk-` 开头）
-3. `export HUNYUAN_API_KEY=sk-xxx` 后重启 dev server
+- `yt-dlp` ≥ `2026.07.04`（用于 B站、抖音等链接；首次可执行 `pipx install yt-dlp`，已有旧版执行 `pipx upgrade yt-dlp`）
+- Step Plan API Key：写入仓库根目录的 `.env.local`；同一个服务端密钥用于 `stepaudio-2.5-asr` 转录和 `step-3.7-flash` 文章整理，该文件已被 Git 忽略
+- 可选覆盖：`STEP_API_BASE=https://api.stepfun.com/step_plan/v1`、`STEP_ARTICLE_MODEL=step-3.7-flash`
 
 ## 运行
 
@@ -68,9 +62,9 @@ npm run electron:prod      # prod：构建后 Electron 内加载 :8787（含后�
 | POST | `/api/episodes/:slug/from-url` | `{ url }`，SSE 拉 B站/抖音/播客/直链音轨 |
 | POST | `/api/episodes/:slug/transcribe` | 触发转录，SSE 流式返回日志 |
 | GET | `/api/episodes/:slug/transcript?type=raw\|srt\|cleaned` | 读取转录稿 |
-| POST | `/api/episodes/:slug/clean` | 清洗转录稿（?mode=ai\|heuristic，默认：有 Key 用混元 AI，否则启发式） |
+| POST | `/api/episodes/:slug/clean` | 使用 Step Plan 整理成文；成功前不覆盖已有文章，失败返回可见错误 |
 
 ## 与原项目的对应关系
 
 - 原 `raw/<slug>/transcribe.sh`（每期一份）由本应用在建期次时按模板自动生成，并已固化修复过的 `merge.py` 位置参数调用。
-- 转录产物、清洗稿与原有 `raw/`、`cleaned/` 目录完全一致，可与原 CLI 流程混用。
+- 转录产物与原有 `raw/` 目录兼容；文章落 `cleaned/<slug>.md`，生成模型和结构统计落 `raw/<slug>/article-meta.json`。

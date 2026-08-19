@@ -4,5 +4,4 @@
 
 | slug | 标题 | 时长 | raw | cleaned | 备注 |
 |------|------|------|-----|---------|------|
-| 2026-06-24-e31-cooling-earth | 梦妮《碳基生物生存指南》E31 · 为了给地球降温人类都在忙些什么 | 82:38 | ✓ | ✓ | Stepfun ASR / 604 段 / 标准化后段落呈现 |
-| 2026-06-24-zhuxueyi-observation | 朱雪怡抖音 · 太立体地形容一个人你就完蛋了 | 02:05 | ✓ | ✓ | Stepfun ASR / 28 段 / 标准化后段落呈现 |
+| 2026-08-19-bv1darmbce4a | 翁家翌：OpenAI，GPT，强化学习，Infra，后训练，天授，tuixue，开源，CMU，清华｜WhynotTV Podcast #4 | 02:02:45 | ✓ | ✓ | Step Plan ASR / 41 个三分钟分段 / step-3.7-flash 整理成文 |

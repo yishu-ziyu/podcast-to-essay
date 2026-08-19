@@ -16,6 +16,7 @@ export const BLOCK_EXT = new Set([
 ]);
 
 const MAX_BYTES = 1.5 * 1024 * 1024 * 1024;
+const MIN_YTDLP_VERSION = '2026.07.04';
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
 
 const MIME_EXT = {
@@ -112,6 +113,21 @@ function lastUseful(buf) {
   return lines.at(-1) || '';
 }
 
+function versionParts(v) {
+  const match = String(v || '').match(/(\d{4})\.(\d{1,2})\.(\d{1,2})/);
+  return match ? match.slice(1).map(Number) : null;
+}
+
+function isOlderThan(version, minimum) {
+  const a = versionParts(version);
+  const b = versionParts(minimum);
+  if (!a || !b) return true;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return a[i] < b[i];
+  }
+  return false;
+}
+
 function spawnLogged(cmd, args, cwd, onLog, timeoutMs) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { cwd, env: process.env });
@@ -140,6 +156,16 @@ function spawnLogged(cmd, args, cwd, onLog, timeoutMs) {
       else reject(new Error(lastUseful(buf) || `yt-dlp 退出 ${code}`));
     });
   });
+}
+
+async function assertCurrentYtDlp(cmd, cwd) {
+  const output = await spawnLogged(cmd, ['--version'], cwd, () => {}, 10 * 1000);
+  const version = String(output).trim().split('\n').at(-1) || '';
+  if (isOlderThan(version, MIN_YTDLP_VERSION)) {
+    const err = new Error(`下载组件版本过旧（${version || '未知'}）`);
+    err.code = 'YTDLP_OUTDATED';
+    throw err;
+  }
 }
 
 async function downloadDirect(url, dir, onLog) {
@@ -193,6 +219,8 @@ async function downloadDirect(url, dir, onLog) {
 
 async function runYtDlp(url, dir, home, onLog) {
   await clearSourceFiles(dir);
+  const command = process.env.YTDLP_BIN || 'yt-dlp';
+  await assertCurrentYtDlp(command, dir);
   const titleFile = path.join(dir, '.yt-title.txt');
   const args = [
     '--no-playlist',
@@ -216,7 +244,7 @@ async function runYtDlp(url, dir, home, onLog) {
   onLog('用 yt-dlp 取音轨…');
   let spawnErr = null;
   try {
-    await spawnLogged(process.env.YTDLP_BIN || 'yt-dlp', args, dir, onLog, 10 * 60 * 1000);
+    await spawnLogged(command, args, dir, onLog, 10 * 60 * 1000);
   } catch (err) {
     spawnErr = err;
   }
