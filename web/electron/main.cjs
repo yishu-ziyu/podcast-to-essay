@@ -34,7 +34,7 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 1366,
     height: 860,
-    backgroundColor: '#0f1115',
+    backgroundColor: '#f7f4f0',
     webPreferences: {
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.cjs'),

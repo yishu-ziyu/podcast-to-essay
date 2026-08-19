@@ -34,5 +34,6 @@ function shutdown(code = 0) {
 process.on('SIGINT', () => shutdown(0));
 process.on('SIGTERM', () => shutdown(0));
 
-run(process.execPath, ['node_modules/vite/bin/vite.js'], 'vite', { IS_DEV: '1' });
-run(process.execPath, ['server/index.mjs'], 'server', { IS_DEV: '1', PORT: '8787' });
+const API_PORT = process.env.API_PORT || process.env.PORT || '8787';
+run(process.execPath, ['node_modules/vite/bin/vite.js'], 'vite', { IS_DEV: '1', API_PORT, PORT: API_PORT });
+run(process.execPath, ['server/index.mjs'], 'server', { IS_DEV: '1', PORT: API_PORT });

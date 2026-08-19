@@ -64,7 +64,8 @@ npm run electron:prod      # prod：构建后 Electron 内加载 :8787（含后�
 | GET | `/api/episodes` | 列出所有期次及状态 |
 | POST | `/api/episodes` | 新建期次 `{ slug }` |
 | DELETE | `/api/episodes/:slug` | 删除期次（仅 raw 目录） |
-| POST | `/api/episodes/:slug/audio` | 上传音频（原始字节，头 `x-filename`） |
+| POST | `/api/episodes/:slug/audio` | 上传音轨/视频（原始字节；`x-filename` 只放 ASCII 的 `source.ext`，原名走 `x-original-name`） |
+| POST | `/api/episodes/:slug/from-url` | `{ url }`，SSE 拉 B站/抖音/播客/直链音轨 |
 | POST | `/api/episodes/:slug/transcribe` | 触发转录，SSE 流式返回日志 |
 | GET | `/api/episodes/:slug/transcript?type=raw\|srt\|cleaned` | 读取转录稿 |
 | POST | `/api/episodes/:slug/clean` | 清洗转录稿（?mode=ai\|heuristic，默认：有 Key 用混元 AI，否则启发式） |

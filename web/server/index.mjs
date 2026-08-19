@@ -18,6 +18,15 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import {
+  BLOCK_EXT,
+  assertPublicHttpUrl,
+  clearSourceFiles,
+  extFromName,
+  ingestUrl,
+  readMeta,
+  writeMeta,
+} from './ingest.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.resolve(__dirname, '..');
@@ -84,7 +93,27 @@ echo "✅ Done -> \$(pwd)/asr_raw.txt"
 }
 
 // ----------------------------- helpers --------------------------------------
+async function titlesFromIndex() {
+  const md = await readFileSafe(path.join(ROOT, 'INDEX.md'));
+  const map = {};
+  if (!md) return map;
+  for (const line of md.split('\n')) {
+    if (!line.startsWith('|')) continue;
+    const cells = line.split('|').map((c) => c.trim());
+    const slug = cells[1];
+    const title = cells[2];
+    const duration = cells[3];
+    if (!slug || slug === 'slug' || /^-+$/.test(slug) || !SAFE_SLUG.test(slug)) continue;
+    map[slug] = {
+      title: title && title !== '标题' ? title : null,
+      duration: duration && /^\d/.test(duration) ? duration : null,
+    };
+  }
+  return map;
+}
+
 async function listEpisodes() {
+  const titles = await titlesFromIndex();
   let entries = [];
   try {
     entries = await fsp.readdir(RAW, { withFileTypes: true });
@@ -100,11 +129,32 @@ async function listEpisodes() {
     const source = files.find((f) => /^source\./.test(f)) || null;
     const hasRaw = files.includes('asr_raw.txt');
     const hasSrt = files.includes('asr_raw.srt');
-    const chunkCount = files.filter((f) => /^chunk_\d+\.mp3$/.test(f)).length;
+    let chunkCount = files.filter((f) => /^chunk_\d+\.mp3$/.test(f)).length;
+    if (chunkCount === 0) {
+      try {
+        const nested = await fsp.readdir(path.join(dir, 'chunks'));
+        chunkCount = nested.filter((f) => /^chunk_\d+\.mp3$/.test(f)).length;
+      } catch {}
+    }
     let cleanedAt = null;
     try { const s = await fsp.stat(path.join(CLEANED, slug + '.md')); cleanedAt = s.mtimeMs; } catch {}
-    const status = !source ? 'empty' : !hasRaw ? 'uploaded' : !cleanedAt ? 'transcribed' : 'cleaned';
-    out.push({ slug, source, hasRaw, hasSrt, chunkCount, cleaned: !!cleanedAt, cleanedAt, status });
+    const status = cleanedAt ? 'cleaned' : !source ? 'empty' : !hasRaw ? 'uploaded' : 'transcribed';
+    const index = titles[slug] || {};
+    const disk = await readMeta(dir);
+    out.push({
+      slug,
+      title: index.title || disk?.title || disk?.originalName || null,
+      duration: index.duration || null,
+      source,
+      sourceUrl: disk?.url || null,
+      originalName: disk?.originalName || null,
+      hasRaw,
+      hasSrt,
+      chunkCount,
+      cleaned: !!cleanedAt,
+      cleanedAt,
+      status,
+    });
   }
   out.sort((a, b) => b.slug.localeCompare(a.slug));
   return out;
@@ -255,14 +305,36 @@ async function handleApi(req, res, url) {
       return sendJSON(res, 200, { ok: true });
     }
 
-    // POST /api/episodes/:slug/audio   (raw bytes; filename in x-filename)
+    // POST /api/episodes/:slug/audio   (raw bytes; ASCII name in x-filename)
     if (method === 'POST' && parts[3] === 'audio') {
       if (!fs.existsSync(dir)) return sendJSON(res, 404, { error: 'episode not found' });
-      const fname = (req.headers['x-filename'] || 'source.mp3').toString();
-      const ext = path.extname(fname) || '.mp3';
+      const rawName = (req.headers['x-filename'] || 'source.mp3').toString();
+      let fname = rawName;
+      try { fname = decodeURIComponent(rawName); } catch {}
+      const rawExt = path.extname(fname).toLowerCase();
+      if (BLOCK_EXT.has(rawExt)) return sendJSON(res, 400, { error: '这不是音轨或视频' });
+      const ext = extFromName(fname) || '.bin';
+      await clearSourceFiles(dir);
       const dest = path.join(dir, 'source' + ext);
       await writeStreamToFile(req, dest);
+      let originalName = '';
+      try { originalName = decodeURIComponent(String(req.headers['x-original-name'] || '')); } catch {}
+      await writeMeta(dir, {
+        originalName: originalName || path.basename(fname),
+        url: null,
+        title: originalName ? originalName.replace(/\.[^.]+$/, '') : null,
+      });
       return sendJSON(res, 200, { ok: true, file: path.basename(dest) });
+    }
+
+    // POST /api/episodes/:slug/from-url  { url } -> SSE
+    if (method === 'POST' && parts[3] === 'from-url') {
+      if (!fs.existsSync(dir)) return sendJSON(res, 404, { error: 'episode not found' });
+      const body = await readBody(req);
+      const link = String(body.url || '').trim();
+      try { assertPublicHttpUrl(link); }
+      catch (err) { return sendJSON(res, 400, { error: err.message }); }
+      return streamFromUrl(res, link, dir);
     }
 
     // POST /api/episodes/:slug/transcribe  -> SSE log stream
@@ -316,6 +388,37 @@ async function handleApi(req, res, url) {
   }
 
   return sendJSON(res, 404, { error: 'not found' });
+}
+
+function streamFromUrl(res, link, dir) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+  });
+  let closed = false;
+  const emit = (event, data) => {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${String(data).replace(/\n/g, ' ')}\n\n`);
+  };
+  const finish = (code) => {
+    if (closed) return;
+    closed = true;
+    emit('done', String(code));
+    res.end();
+  };
+  res.on('close', () => { closed = true; });
+  ingestUrl(link, dir, HOME, (line) => { if (!closed) emit('log', line); })
+    .then(async (got) => {
+      await writeMeta(dir, { url: link, title: got.title || null, originalName: got.title || got.file });
+      emit('log', '✅ ' + (got.title || got.file));
+      finish(0);
+    })
+    .catch((err) => {
+      emit('log', '❌ ' + err.message);
+      finish(1);
+    });
 }
 
 function streamTranscribe(res, script, cwd) {

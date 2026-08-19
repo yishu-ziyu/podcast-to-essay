@@ -12,6 +12,7 @@
 # ASR scratch
 raw/**/chunks/
 raw/**/source.*
+raw/**/.yt-title.txt
 
 # web
 web/node_modules/
