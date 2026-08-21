@@ -44,9 +44,12 @@ try {
 } catch {}
 
 const PORT = Number(process.env.PORT || 8787);
+const LISTEN_HOST = process.env.HOST || '127.0.0.1';
 const IS_DEV = process.env.IS_DEV === '1';
 const HOME = process.env.HOME || '';
 const TRANSCRIPTIONS = new Map();
+const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_BYTES || 512 * 1024 * 1024);
+const MAX_JSON_BYTES = 1 * 1024 * 1024;
 
 fs.mkdirSync(RAW, { recursive: true });
 fs.mkdirSync(CLEANED, { recursive: true });
@@ -180,9 +183,32 @@ function writeTranscriptionState(dir, state, error = null) {
   ).catch(() => {});
 }
 
+function corsOrigin(req) {
+  const origin = String(req?.headers?.origin || '');
+  if (!origin) return '';
+  try {
+    const u = new URL(origin);
+    if (
+      (u.protocol === 'http:' || u.protocol === 'https:') &&
+      (u.hostname === 'localhost' || u.hostname === '127.0.0.1')
+    ) {
+      return origin;
+    }
+  } catch {}
+  return '';
+}
+
+function corsHeaders(req) {
+  const origin = corsOrigin(req);
+  return origin ? { 'Access-Control-Allow-Origin': origin } : {};
+}
+
 function sendJSON(res, code, obj) {
   const data = JSON.stringify(obj);
-  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+  res.writeHead(code, {
+    'Content-Type': 'application/json; charset=utf-8',
+    ...corsHeaders(res.req),
+  });
   res.end(data);
 }
 
@@ -365,7 +391,7 @@ async function handleApi(req, res, url) {
       else p = path.join(dir, 'asr_raw.txt');
       const text = await readFileSafe(p);
       if (text === null) return sendJSON(res, 404, { error: 'not found', type });
-      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', ...corsHeaders(req) });
       return res.end(text);
     }
 
@@ -406,7 +432,7 @@ function streamFromUrl(res, link, dir) {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache',
     Connection: 'keep-alive',
-    'Access-Control-Allow-Origin': '*',
+    ...corsHeaders(res.req),
   });
   let closed = false;
   const emit = (event, data) => {
@@ -437,7 +463,7 @@ function streamIngest(res, link) {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache',
     Connection: 'keep-alive',
-    'Access-Control-Allow-Origin': '*',
+    ...corsHeaders(res.req),
   });
   let closed = false;
   const emit = (event, data) => {
@@ -481,7 +507,7 @@ function streamTranscribe(res, script, cwd) {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache',
     Connection: 'keep-alive',
-    'Access-Control-Allow-Origin': '*',
+    ...corsHeaders(res.req),
   });
   const child = spawn('bash', [script], {
     cwd,
@@ -531,22 +557,46 @@ function streamTranscribe(res, script, cwd) {
 }
 
 function readBody(req) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let data = '';
-    req.on('data', (c) => (data += c));
+    let seen = 0;
+    req.on('data', (c) => {
+      seen += c.length;
+      if (seen > MAX_JSON_BYTES) {
+        reject(new Error('request body too large'));
+        req.destroy();
+        return;
+      }
+      data += c;
+    });
     req.on('end', () => {
       try { resolve(JSON.parse(data || '{}')); } catch { resolve({}); }
     });
+    req.on('error', reject);
   });
 }
 
 function writeStreamToFile(stream, dest) {
   return new Promise((resolve, reject) => {
     const ws = fs.createWriteStream(dest);
+    let seen = 0;
+    let failed = false;
+    const fail = (err) => {
+      if (failed) return;
+      failed = true;
+      stream.unpipe(ws);
+      ws.destroy();
+      stream.destroy?.();
+      fsp.rm(dest, { force: true }).finally(() => reject(err));
+    };
+    stream.on('data', (chunk) => {
+      seen += chunk.length;
+      if (seen > MAX_UPLOAD_BYTES) fail(new Error('文件太大'));
+    });
     stream.pipe(ws);
-    ws.on('finish', resolve);
-    ws.on('error', reject);
-    stream.on('error', reject);
+    ws.on('finish', () => { if (!failed) resolve(); });
+    ws.on('error', fail);
+    stream.on('error', fail);
   });
 }
 
@@ -583,6 +633,14 @@ function serveStatic(req, res, url) {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://localhost:${PORT}`);
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        ...corsHeaders(req),
+        'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, x-filename, x-original-name',
+      });
+      return res.end();
+    }
     if (url.pathname.startsWith('/api/') || url.pathname === '/api') {
       await handleApi(req, res, url);
     } else if (!IS_DEV && fs.existsSync(DIST)) {
@@ -591,12 +649,13 @@ const server = http.createServer(async (req, res) => {
       sendJSON(res, 404, { error: 'unknown route', hint: 'dev: use Vite on :5173; prod: build first' });
     }
   } catch (err) {
-    sendJSON(res, 500, { error: err.message });
+    const code = err && err.message === 'request body too large' ? 413 : 500;
+    sendJSON(res, code, { error: err.message });
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`[server] podcast-to-essay backend on http://localhost:${PORT}`);
+server.listen(PORT, LISTEN_HOST, () => {
+  console.log(`[server] podcast-to-essay backend on http://${LISTEN_HOST}:${PORT}`);
   console.log(`[server] root=${ROOT}`);
   console.log('[server] engine=StepFun ASR');
 });
