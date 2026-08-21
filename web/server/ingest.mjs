@@ -168,12 +168,24 @@ async function assertCurrentYtDlp(cmd, cwd) {
   }
 }
 
-async function downloadDirect(url, dir, onLog) {
-  onLog('按直链拉取…');
+async function fetchPublicHttp(url, { hops = 0 } = {}) {
+  if (hops > 5) throw new Error('重定向过多');
   const res = await fetch(url.href, {
-    redirect: 'follow',
+    redirect: 'manual',
     headers: { 'user-agent': UA },
   });
+  if (res.status === 301 || res.status === 302 || res.status === 303 || res.status === 307 || res.status === 308) {
+    const loc = res.headers.get('location');
+    if (!loc) throw new Error('重定向缺少地址');
+    const next = assertPublicHttpUrl(new URL(loc, url.href).href);
+    return fetchPublicHttp(next, { hops: hops + 1 });
+  }
+  return res;
+}
+
+async function downloadDirect(url, dir, onLog) {
+  onLog('按直链拉取…');
+  const res = await fetchPublicHttp(url);
   if (!res.ok) throw new Error(`链接返回 ${res.status}`);
   const ctype = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
   if (ctype.includes('text/html') || ctype.includes('application/json') || ctype.includes('text/plain')) {
