@@ -5,6 +5,7 @@ import react from '@vitejs/plugin-react';
 // backend on :8787. In Electron prod the server (:8787) also serves the built
 // assets from dist/, so the same relative /api paths work without a proxy.
 export default defineConfig({
+  base: './',
   plugins: [react()],
   server: {
     port: 5173,

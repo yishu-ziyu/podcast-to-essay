@@ -26,7 +26,8 @@ export interface Episode {
   status: EpisodeStatus;
 }
 
-const API = '/api';
+// Relative so the app also works behind a reverse-proxy path prefix (e.g. /lcw/).
+const API = 'api';
 
 export async function getLockState(): Promise<boolean> {
   const r = await fetch(`${API}/health`);
