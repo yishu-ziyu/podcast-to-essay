@@ -6,7 +6,7 @@ interface Props {
   selected: string | null;
   loading: boolean;
   onSelect: (slug: string) => void;
-  onDelete: (slug: string) => void;
+  onDelete?: (slug: string) => void;
 }
 
 function statusFor(episode: Episode) {
@@ -29,7 +29,7 @@ export default function EpisodeList({ episodes, selected, loading, onSelect, onD
               <span className={`status-dot ${episode.transcription?.state || episode.status}`} />
               <span className="episode-copy"><span className="ep-title">{displayName(episode)}</span><span className="ep-meta">{statusFor(episode)}{episode.duration ? ` · ${episode.duration}` : ` · ${displayDate(episode)}`}</span></span>
             </button>
-            <button className="btn-del" type="button" aria-label={`删除${displayName(episode)}`} onClick={() => onDelete(episode.slug)}>×</button>
+            {onDelete && <button className="btn-del" type="button" aria-label={`删除${displayName(episode)}`} onClick={() => onDelete(episode.slug)}>×</button>}
           </li>
         ))}
       </ul>

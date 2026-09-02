@@ -5,6 +5,7 @@ import { displayName, extractUrl, slugFromFile } from '../lib';
 interface Props {
   episode: Episode | null;
   episodes: Episode[];
+  owner: boolean;
   onChanged: () => Promise<void> | void;
   onSelect: (slug: string) => void;
   onToast: (msg: string | null) => void;
@@ -48,7 +49,7 @@ function Journey({ active, compact = false }: { active: number; compact?: boolea
   );
 }
 
-export default function Workbench({ episode, episodes, onChanged, onSelect, onToast }: Props) {
+export default function Workbench({ episode, episodes, owner, onChanged, onSelect, onToast }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const lastRef = useRef<{ kind: 'file'; file: File } | { kind: 'url'; url: string } | null>(null);
   const [urlDraft, setUrlDraft] = useState('');
@@ -225,10 +226,12 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
               <button className="button primary" disabled={importing || !validDraftUrl}>{importing ? '导入中' : '导入链接'}</button>
             </form>
             <p className={`field-hint${urlDraft.trim() && !validDraftUrl ? ' error-text' : ''}`} aria-live="polite">{urlDraft.trim() && !validDraftUrl ? '链接需以 http:// 或 https:// 开头。' : '\u00a0'}</p>
-            <div className="or"><span /> 或使用本地文件 <span /></div>
-            <button type="button" className={`file-drop${over ? ' over' : ''}`} disabled={importing} onClick={() => fileRef.current?.click()} onDragOver={(event) => { event.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={(event) => { event.preventDefault(); setOver(false); void takeFile(event.dataTransfer.files?.[0]); }}>
-              <b>选择或拖入音视频文件</b><small>支持 MP3、MP4、M4A、WAV 等常见格式</small>
-            </button>
+            {owner && <>
+              <div className="or"><span /> 或使用本地文件 <span /></div>
+              <button type="button" className={`file-drop${over ? ' over' : ''}`} disabled={importing} onClick={() => fileRef.current?.click()} onDragOver={(event) => { event.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={(event) => { event.preventDefault(); setOver(false); void takeFile(event.dataTransfer.files?.[0]); }}>
+                <b>选择或拖入音视频文件</b><small>支持 MP3、MP4、M4A、WAV 等常见格式</small>
+              </button>
+            </>}
           </div>
           <p className="control-note"><span aria-hidden="true">○</span> 导入后不会自动转录，需手动开始。</p>
         </div>
@@ -243,7 +246,7 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
           <div><p className="kicker">{serverState === 'failed' ? '转录失败' : episode.status === 'uploaded' ? '素材已就绪' : episode.status === 'transcribed' ? '初稿已生成' : '处理中'}</p><h1>{displayName(episode)}</h1></div>
           <span className={`state-chip ${serverState === 'failed' ? 'failed' : isWorking ? 'active' : episode.status}`}>{isPaused ? '已暂停' : isWorking ? '转录中' : serverState === 'failed' ? '转录失败' : episode.status === 'uploaded' ? '待转录' : '待整理'}</span>
         </header>
-        <div className="source-strip"><span className="source-icon">♪</span><div><b>{sourceLabel(episode)}</b><small>{episode.chunkCount ? `${episode.chunkCount} 段` : '原始文件已保存'}{episode.duration ? ` · ${episode.duration}` : ''}</small></div><button type="button" className="text-button" onClick={() => fileRef.current?.click()}>更换</button></div>
+        <div className="source-strip"><span className="source-icon">♪</span><div><b>{sourceLabel(episode)}</b><small>{episode.chunkCount ? `${episode.chunkCount} 段` : '原始文件已保存'}{episode.duration ? ` · ${episode.duration}` : ''}</small></div>{owner && <button type="button" className="text-button" onClick={() => fileRef.current?.click()}>更换</button>}</div>
 
         {unnamed && <form className="title-editor" onSubmit={(event) => { event.preventDefault(); void saveTitle(); }}><label htmlFor="episode-title">先命名，再开始转录。</label><input id="episode-title" value={titleDraft} onChange={(event) => setTitleDraft(event.target.value)} placeholder="节目名 · 主题" /><button className="button quiet" disabled={savingTitle || !titleDraft.trim()}>{savingTitle ? '保存中' : '保存'}</button></form>}
 

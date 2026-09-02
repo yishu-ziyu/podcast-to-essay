@@ -1,33 +1,28 @@
 import { useEffect, useState, useCallback, FormEvent } from 'react';
-import { Episode, listEpisodes, deleteEpisode, getLockState, login } from './api';
+import { Episode, listEpisodes, deleteEpisode, getSession, login, Session } from './api';
 import EpisodeList from './components/EpisodeList';
 import Workbench from './components/Workbench';
 import TranscriptViewer from './components/TranscriptViewer';
 
-function Gate({ onUnlocked }: { onUnlocked: () => void }) {
+function OwnerLogin({ onClose, onLoggedIn }: { onClose: () => void; onLoggedIn: () => void }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true); setError(null);
-    try { await login(password); onUnlocked(); }
+    try { await login(password); onLoggedIn(); }
     catch (err) { setError((err as Error).message); }
     finally { setBusy(false); }
   };
   return (
-    <div className="app-shell">
-      <main className="app-main">
-        <header className="app-header"><span className="wordmark">录成文</span></header>
-        <div className="stage">
-          <form className="gate" onSubmit={(event) => { void submit(event); }}>
-            <label htmlFor="gate-password">访问密码</label>
-            <input id="gate-password" type="password" autoFocus value={password} onChange={(event) => { setPassword(event.target.value); setError(null); }} />
-            <button className="button primary" disabled={busy || !password}>{busy ? '验证中' : '进入'}</button>
-            {error && <p className="field-hint error-text">{error}</p>}
-          </form>
-        </div>
-      </main>
+    <div className="modal-backdrop" onClick={onClose}>
+      <form className="gate" onClick={(event) => event.stopPropagation()} onSubmit={(event) => { void submit(event); }}>
+        <label htmlFor="gate-password">所有者密码</label>
+        <input id="gate-password" type="password" autoFocus value={password} onChange={(event) => { setPassword(event.target.value); setError(null); }} />
+        <button className="button primary" disabled={busy || !password}>{busy ? '验证中' : '登录'}</button>
+        {error && <p className="field-hint error-text">{error}</p>}
+      </form>
     </div>
   );
 }
@@ -38,10 +33,11 @@ export default function App() {
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [locked, setLocked] = useState<boolean | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [loginOpen, setLoginOpen] = useState(false);
 
   useEffect(() => {
-    getLockState().then(setLocked).catch(() => setLocked(false));
+    getSession().then(setSession).catch(() => setSession({ owner: true, guest: null }));
   }, []);
 
   const refresh = useCallback(async () => {
@@ -60,7 +56,7 @@ export default function App() {
     }
   }, []);
 
-  useEffect(() => { if (locked === false) void refresh(); }, [refresh, locked]);
+  useEffect(() => { if (session) void refresh(); }, [refresh, session]);
 
   const handleDelete = async (slug: string) => {
     if (!confirm('删除该条目及其音轨？已生成的文章会保留。')) return;
@@ -79,8 +75,8 @@ export default function App() {
     setLibraryOpen(false);
   };
 
-  if (locked === null) return null;
-  if (locked) return <Gate onUnlocked={() => setLocked(false)} />;
+  if (!session) return null;
+  const guest = !session.owner ? session.guest : null;
 
   return (
     <div className={`app-shell${libraryOpen ? ' library-open' : ''}`}>
@@ -101,7 +97,7 @@ export default function App() {
             selected={selected}
             loading={loading}
             onSelect={(slug) => { setSelected(slug); setLibraryOpen(false); }}
-            onDelete={handleDelete}
+            onDelete={session.owner ? handleDelete : undefined}
           />
         )}
       </aside>
@@ -110,8 +106,16 @@ export default function App() {
         <header className="app-header">
           <button type="button" className="wordmark" onClick={startNew}>录成文</button>
           <span className="header-context">{reading ? '文章' : current ? '条目' : '新建'}</span>
-          <button type="button" className="new-button" onClick={startNew}>＋ 新建</button>
+          {session.owner
+            ? <button type="button" className="new-button" onClick={startNew}>＋ 新建</button>
+            : <button type="button" className="new-button" onClick={() => setLoginOpen(true)}>所有者登录</button>}
         </header>
+        {guest && (
+          <div className="guest-banner">
+            <span>游客体验：今日剩余 导入 {guest.left.ingest} / 转录 {guest.left.transcribe} / 整理 {guest.left.clean}。数据仅本人可见。</span>
+            <a href="https://github.com/yishu-ziyu/podcast-to-essay" target="_blank" rel="noreferrer">长期或大量使用，建议自部署</a>
+          </div>
+        )}
         <div className="stage">
           {reading && current ? (
             <TranscriptViewer episode={current} onCleaned={refresh} onToast={setToast} />
@@ -119,6 +123,7 @@ export default function App() {
             <Workbench
               episode={current}
               episodes={episodes}
+              owner={session.owner}
               onChanged={refresh}
               onSelect={setSelected}
               onToast={setToast}
@@ -127,6 +132,7 @@ export default function App() {
         </div>
       </main>
 
+      {loginOpen && <OwnerLogin onClose={() => setLoginOpen(false)} onLoggedIn={async () => { setLoginOpen(false); setSession(await getSession()); await refresh(); }} />}
       {toast && <button type="button" className="toast" onClick={() => setToast(null)}>{toast}</button>}
     </div>
   );

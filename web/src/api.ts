@@ -29,10 +29,19 @@ export interface Episode {
 // Relative so the app also works behind a reverse-proxy path prefix (e.g. /lcw/).
 const API = 'api';
 
-export async function getLockState(): Promise<boolean> {
+export interface Session {
+  owner: boolean;
+  guest: {
+    limits: { ingest: number; transcribe: number; clean: number };
+    left: { ingest: number; transcribe: number; clean: number };
+  } | null;
+}
+
+export async function getSession(): Promise<Session> {
   const r = await fetch(`${API}/health`);
-  const d = (await r.json()) as { locked?: boolean };
-  return Boolean(d.locked);
+  const d = (await r.json()) as { locked?: boolean; owner?: boolean; guest?: Session['guest'] };
+  if (d.locked) throw new Error('locked');
+  return { owner: Boolean(d.owner), guest: d.guest || null };
 }
 
 export async function login(password: string): Promise<void> {

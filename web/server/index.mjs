@@ -264,14 +264,70 @@ function ingestProgress(line) {
   return null;
 }
 
-// ----------------------------- access gate ----------------------------------
+// ----------------------------- access: owner vs guest -----------------------
+// Owner = password session (or everyone when no password is configured).
+// Guest = cookie-identified visitor with daily quotas, sees only own episodes.
+const GUEST_LIMITS = {
+  ingest: Number(process.env.GUEST_INGEST_PER_DAY || 5),
+  transcribe: Number(process.env.GUEST_TRANSCRIBE_PER_DAY || 3),
+  clean: Number(process.env.GUEST_CLEAN_PER_DAY || 3),
+};
+
 function sessionId(req) {
   const m = String(req.headers.cookie || '').match(/(?:^|;\s*)p2e_session=([^;]+)/);
   return m ? m[1] : '';
 }
 
-function authenticated(req) {
+function isOwner(req) {
   return !ACCESS_PASSWORD || SESSIONS.has(sessionId(req));
+}
+
+function guestId(req, res) {
+  const m = String(req.headers.cookie || '').match(/(?:^|;\s*)p2e_guest=([^;]+)/);
+  if (m) return m[1];
+  const id = randomUUID();
+  res.setHeader('Set-Cookie', `p2e_guest=${id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}`);
+  return id;
+}
+
+function clientIp(req) {
+  return String(req.headers['x-real-ip'] || '').trim() || req.socket.remoteAddress || '';
+}
+
+const QUOTA = new Map(); // key -> { date, ingest, transcribe, clean }
+function quotaEntry(key) {
+  const today = new Date().toISOString().slice(0, 10);
+  let q = QUOTA.get(key);
+  if (!q || q.date !== today) {
+    q = { date: today, ingest: 0, transcribe: 0, clean: 0 };
+    QUOTA.set(key, q);
+  }
+  return q;
+}
+function quotaLeft(key) {
+  const q = quotaEntry(key);
+  return {
+    ingest: Math.max(0, GUEST_LIMITS.ingest - q.ingest),
+    transcribe: Math.max(0, GUEST_LIMITS.transcribe - q.transcribe),
+    clean: Math.max(0, GUEST_LIMITS.clean - q.clean),
+  };
+}
+function quotaTake(req, gid, kind) {
+  const left = quotaLeft(`${clientIp(req)}|${gid}`);
+  if (left[kind] <= 0) {
+    return '游客每日额度已用完，明天再来。长期或大量使用建议自部署。';
+  }
+  quotaEntry(`${clientIp(req)}|${gid}`)[kind]++;
+  return null;
+}
+
+async function ownerOf(dir) {
+  const m = await readJSON(path.join(dir, 'owner.json'));
+  return m?.owner || 'user'; // entries without an owner file belong to the owner
+}
+async function canAccess(req, dir, gid) {
+  if (isOwner(req)) return true;
+  return (await ownerOf(dir)) === `guest:${gid}`;
 }
 
 // ----------------------------- routing ---------------------------------------
@@ -299,27 +355,43 @@ async function handleApi(req, res, url) {
 
   // GET /api/health
   if (method === 'GET' && parts[1] === 'health') {
-    if (ACCESS_PASSWORD && !authenticated(req)) return sendJSON(res, 200, { ok: true, locked: true });
-    return sendJSON(res, 200, { ok: true, locked: false, engine: 'stepfun', root: ROOT, article: articleEngine });
+    const gid = guestId(req, res);
+    return sendJSON(res, 200, {
+      ok: true, locked: false, owner: isOwner(req),
+      guest: { limits: GUEST_LIMITS, left: quotaLeft(`${clientIp(req)}|${gid}`) },
+      engine: 'stepfun', root: ROOT, article: articleEngine,
+    });
   }
 
   // GET /api/episodes
   if (method === 'GET' && parts[1] === 'episodes' && parts.length === 2) {
-    return sendJSON(res, 200, { episodes: await listEpisodes() });
+    const gid = guestId(req, res);
+    const episodes = [];
+    for (const ep of await listEpisodes()) {
+      if (await canAccess(req, path.join(RAW, ep.slug), gid)) episodes.push(ep);
+    }
+    return sendJSON(res, 200, { episodes });
   }
 
   // POST /api/ingests { url } -> SSE. A link becomes an episode only after an
   // audio file has landed, so a failed pull can never pollute raw/ or the queue.
   if (method === 'POST' && parts[1] === 'ingests' && parts.length === 2) {
+    const gid = guestId(req, res);
+    const ownerTag = isOwner(req) ? 'user' : `guest:${gid}`;
     const body = await readBody(req);
     const link = String(body.url || '').trim();
     try { assertPublicHttpUrl(link); }
     catch (err) { return sendJSON(res, 400, { error: err.message }); }
-    return streamIngest(res, link);
+    if (!isOwner(req)) {
+      const err = quotaTake(req, gid, 'ingest');
+      if (err) return sendJSON(res, 429, { error: err });
+    }
+    return streamIngest(res, link, ownerTag);
   }
 
-  // POST /api/episodes  { slug }
+  // POST /api/episodes  { slug } (owner only; guests import via /ingests)
   if (method === 'POST' && parts[1] === 'episodes' && parts.length === 2) {
+    if (!isOwner(req)) return sendJSON(res, 403, { error: '游客请直接用链接导入。' });
     const body = await readBody(req);
     const slug = (body.slug || '').toString().trim();
     if (!SAFE_SLUG.test(slug)) return sendJSON(res, 400, { error: 'invalid slug' });
@@ -336,9 +408,14 @@ async function handleApi(req, res, url) {
     const slug = parts[2];
     if (!SAFE_SLUG.test(slug)) return sendJSON(res, 400, { error: 'invalid slug' });
     const dir = path.join(RAW, slug);
+    const gid = guestId(req, res);
 
-    // DELETE /api/episodes/:slug
+    // Guests may only touch their own episodes (404 hides existence).
+    if (!(await canAccess(req, dir, gid))) return sendJSON(res, 404, { error: 'not found' });
+
+    // DELETE /api/episodes/:slug (owner only)
     if (method === 'DELETE' && parts.length === 3) {
+      if (!isOwner(req)) return sendJSON(res, 403, { error: '仅所有者可删除。' });
       if (!fs.existsSync(dir)) return sendJSON(res, 404, { error: 'not found' });
       await fsp.rm(dir, { recursive: true, force: true });
       return sendJSON(res, 200, { ok: true });
@@ -353,8 +430,9 @@ async function handleApi(req, res, url) {
       return sendJSON(res, 200, { ok: true, title });
     }
 
-    // POST /api/episodes/:slug/audio   (raw bytes; ASCII name in x-filename)
+    // POST /api/episodes/:slug/audio   (raw bytes; ASCII name in x-filename; owner only)
     if (method === 'POST' && parts[3] === 'audio') {
+      if (!isOwner(req)) return sendJSON(res, 403, { error: '游客请直接用链接导入。' });
       if (!fs.existsSync(dir)) return sendJSON(res, 404, { error: 'episode not found' });
       const rawName = (req.headers['x-filename'] || 'source.mp3').toString();
       let fname = rawName;
@@ -378,6 +456,10 @@ async function handleApi(req, res, url) {
     // POST /api/episodes/:slug/from-url  { url } -> SSE
     if (method === 'POST' && parts[3] === 'from-url') {
       if (!fs.existsSync(dir)) return sendJSON(res, 404, { error: 'episode not found' });
+      if (!isOwner(req)) {
+        const err = quotaTake(req, gid, 'ingest');
+        if (err) return sendJSON(res, 429, { error: err });
+      }
       const body = await readBody(req);
       const link = String(body.url || '').trim();
       try { assertPublicHttpUrl(link); }
@@ -407,6 +489,10 @@ async function handleApi(req, res, url) {
       if (!fs.existsSync(dir)) return sendJSON(res, 404, { error: 'episode not found' });
       if (!engineReady()) return sendJSON(res, 409, { error: '未配置转录服务，请先设置 STEP_API_KEY。' });
       if (TRANSCRIPTIONS.has(slug)) return sendJSON(res, 409, { error: '转录进行中。' });
+      if (!isOwner(req)) {
+        const err = quotaTake(req, gid, 'transcribe');
+        if (err) return sendJSON(res, 429, { error: err });
+      }
       const script = path.join(dir, 'transcribe.sh');
       await fsp.writeFile(script, transcribeTemplate(), 'utf8');
       await fsp.chmod(script, 0o755);
@@ -431,6 +517,10 @@ async function handleApi(req, res, url) {
     // the model response passes structural validation. There is no silent
     // heuristic fallback because that would mislabel a transcript as an article.
     if (method === 'POST' && parts[3] === 'clean') {
+      if (!isOwner(req)) {
+        const err = quotaTake(req, gid, 'clean');
+        if (err) return sendJSON(res, 429, { error: err });
+      }
       const rawText = await readFileSafe(path.join(dir, 'asr_raw.txt'));
       if (rawText === null) return sendJSON(res, 404, { error: 'no asr_raw.txt' });
       const disk = await readMeta(dir);
@@ -481,16 +571,16 @@ function streamFromUrl(res, link, dir) {
   ingestUrl(link, dir, HOME, (line) => { if (!closed) emit('log', line); })
     .then(async (got) => {
       await writeMeta(dir, { url: link, title: got.title || null, originalName: got.title || got.file });
-      emit('log', '✅ ' + (got.title || got.file));
+      emit('log', got.title || got.file);
       finish(0);
     })
     .catch((err) => {
-      emit('log', '❌ ' + err.message);
+      emit('log', err.message);
       finish(1);
     });
 }
 
-function streamIngest(res, link) {
+function streamIngest(res, link, ownerTag = 'user') {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache',
@@ -523,6 +613,7 @@ function streamIngest(res, link) {
       await writeMeta(staged, { url: link, title: got.title || null, originalName: got.title || got.file });
       await fsp.writeFile(path.join(staged, 'transcribe.sh'), transcribeTemplate(), 'utf8');
       await fsp.chmod(path.join(staged, 'transcribe.sh'), 0o755);
+      await fsp.writeFile(path.join(staged, 'owner.json'), JSON.stringify({ owner: ownerTag }, null, 2), 'utf8');
       await fsp.rename(staged, path.join(RAW, slug));
       emit('ready', { slug, title: got.title || got.file });
     } catch (err) {
@@ -674,9 +765,6 @@ const server = http.createServer(async (req, res) => {
       return res.end();
     }
     if (url.pathname.startsWith('/api/') || url.pathname === '/api') {
-      if (ACCESS_PASSWORD && !authenticated(req) && !(url.pathname === '/api/login' || url.pathname === '/api/health')) {
-        return sendJSON(res, 401, { error: 'locked' });
-      }
       await handleApi(req, res, url);
     } else if (!IS_DEV && fs.existsSync(DIST)) {
       serveStatic(req, res, url);

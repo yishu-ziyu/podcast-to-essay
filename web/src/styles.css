@@ -131,7 +131,11 @@ button { -webkit-tap-highlight-color: transparent; }
 .recovery-note { margin: -7px 0 20px; color: var(--ink); font-size: 12px; }
 .recovery-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .button { min-height: 44px; border: 0; border-radius: 8px; cursor: pointer; font: 600 12px var(--sans); }
-.gate { width: min(360px, 90vw); margin: 12vh auto 0; display: grid; gap: 10px; padding: 26px; border: 1px solid var(--line); background: var(--surface); border-radius: 16px; }
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, .35); display: grid; place-items: start center; z-index: 50; }
+.modal-backdrop .gate { margin: 16vh auto 0; }
+.guest-banner { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 18px; background: var(--surface-soft); border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.guest-banner a { color: var(--accent); white-space: nowrap; }
+.gate { width: min(360px, 90vw); display: grid; gap: 10px; padding: 26px; border: 1px solid var(--line); background: var(--surface); border-radius: 16px; }
 .gate label { font-size: 13px; font-weight: 600; }
 .gate input { height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: 9px; outline: none; background: var(--surface-soft); color: var(--ink); }
 .gate input:focus { border-color: var(--accent); background: var(--surface); }
