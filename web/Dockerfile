@@ -11,7 +11,7 @@ FROM node:22-slim
 # Use Aliyun apt mirror for fast downloads on CN servers
 RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null \
     || sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg curl \
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg curl ca-certificates \
     && case "$(dpkg --print-architecture)" in \
          arm64) YT_SUFFIX="_aarch64" ;; \
          *) YT_SUFFIX="" ;; \
