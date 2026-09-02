@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg curl ca-
          arm64) YT_SUFFIX="_aarch64" ;; \
          *) YT_SUFFIX="" ;; \
        esac \
-    && curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp${YT_SUFFIX}" -o /usr/local/bin/yt-dlp \
+    && curl -L --http1.1 --retry 5 --retry-all-errors "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp${YT_SUFFIX}" -o /usr/local/bin/yt-dlp \
     && chmod +x /usr/local/bin/yt-dlp \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
