@@ -1,0 +1,5 @@
+node_modules
+dist
+.ingests
+.env
+.env.local

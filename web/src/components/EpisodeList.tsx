@@ -13,15 +13,15 @@ function statusFor(episode: Episode) {
   if (episode.transcription?.state === 'paused') return '已暂停';
   if (episode.transcription?.state === 'running') return '转录中';
   if (episode.transcription?.state === 'failed') return '需要处理';
-  return { uploaded: '待转录', transcribed: '待成文', cleaned: '已成文', empty: '待投放' }[episode.status];
+  return { uploaded: '待转录', transcribed: '待整理', cleaned: '已生成文章', empty: '无素材' }[episode.status];
 }
 
 export default function EpisodeList({ episodes, selected, loading, onSelect, onDelete }: Props) {
   return (
     <div className="episode-list">
-      <div className="library-summary"><span>全部内容</span><b>{episodes.length}</b></div>
-      {loading && !episodes.length && <p className="library-empty">正在打开资料库…</p>}
-      {!loading && !episodes.length && <p className="library-empty">还没有收进来的声音。</p>}
+      <div className="library-summary"><span>全部条目</span><b>{episodes.length}</b></div>
+      {loading && !episodes.length && <p className="library-empty">加载中…</p>}
+      {!loading && !episodes.length && <p className="library-empty">暂无条目。</p>}
       <ul>
         {episodes.map((episode) => (
           <li key={episode.slug} className={episode.slug === selected ? 'active' : ''}>
@@ -29,7 +29,7 @@ export default function EpisodeList({ episodes, selected, loading, onSelect, onD
               <span className={`status-dot ${episode.transcription?.state || episode.status}`} />
               <span className="episode-copy"><span className="ep-title">{displayName(episode)}</span><span className="ep-meta">{statusFor(episode)}{episode.duration ? ` · ${episode.duration}` : ` · ${displayDate(episode)}`}</span></span>
             </button>
-            <button className="btn-del" type="button" aria-label={`撤掉${displayName(episode)}`} onClick={() => onDelete(episode.slug)}>×</button>
+            <button className="btn-del" type="button" aria-label={`删除${displayName(episode)}`} onClick={() => onDelete(episode.slug)}>×</button>
           </li>
         ))}
       </ul>

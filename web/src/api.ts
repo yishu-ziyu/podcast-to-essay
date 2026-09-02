@@ -28,6 +28,21 @@ export interface Episode {
 
 const API = '/api';
 
+export async function getLockState(): Promise<boolean> {
+  const r = await fetch(`${API}/health`);
+  const d = (await r.json()) as { locked?: boolean };
+  return Boolean(d.locked);
+}
+
+export async function login(password: string): Promise<void> {
+  const r = await fetch(`${API}/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  if (!r.ok) throw new Error('密码不对。');
+}
+
 export interface TranscribeHandlers {
   onLog: (line: string) => void;
   onDone: (code: number) => void;
@@ -132,14 +147,15 @@ export function ingestUrlStream(url: string, h: IngestHandlers): void {
         const e = await r.json().catch(() => ({}));
         throw new Error((e as { error?: string }).error || `HTTP ${r.status}`);
       }
-      if (!r.body) { h.onFailed('没有收到下载进度'); return; }
+      if (!r.body) { h.onFailed('下载中断'); return; }
       const reader = r.body.getReader();
       const decoder = new TextDecoder();
       let buf = '';
+      let settled = false;
       const pump = (): void => {
         reader.read().then(({ done, value }) => {
           if (done) {
-            if (!buf.includes('event: done')) h.onDone(1);
+            if (!settled) h.onFailed('导入未完成，请重试。');
             return;
           }
           buf += decoder.decode(value, { stream: true });
@@ -155,8 +171,8 @@ export function ingestUrlStream(url: string, h: IngestHandlers): void {
             }
             const text = dataLines.join('\n');
             const data = JSON.parse(text) as { message?: string; slug?: string; title?: string };
-            if (event === 'ready' && data.slug && data.title) h.onReady({ slug: data.slug, title: data.title });
-            else if (event === 'failed') h.onFailed(data.message || '没有拿到可转录的音频');
+            if (event === 'ready' && data.slug && data.title) { settled = true; h.onReady({ slug: data.slug, title: data.title }); }
+            else if (event === 'failed') { settled = true; h.onFailed(data.message || '未获取到可转录的音频'); }
             else if (event === 'progress') h.onProgress(data.message || '正在准备音轨…');
           }
           pump();
@@ -164,7 +180,7 @@ export function ingestUrlStream(url: string, h: IngestHandlers): void {
       };
       pump();
     })
-    .catch(() => { h.onFailed('网络没有连上下载服务，请重试。'); });
+    .catch(() => { h.onFailed('无法连接下载服务，请重试。'); });
 }
 
 export async function getTranscript(slug: string, type: 'raw' | 'srt' | 'cleaned'): Promise<string> {
@@ -191,7 +207,7 @@ export function transcribeStream(slug: string, h: TranscribeHandlers): void {
     .then(async (r) => {
       if (!r.ok) {
         const e = await r.json().catch(() => ({}));
-        throw new Error((e as { error?: string }).error || '转录没有开始');
+        throw new Error((e as { error?: string }).error || '转录未启动');
       }
       if (!r.body) { h.onDone(1); return; }
       const reader = r.body.getReader();
@@ -220,5 +236,5 @@ export function transcribeStream(slug: string, h: TranscribeHandlers): void {
       };
       pump();
     })
-    .catch((e) => { h.onLog('❌ ' + e.message); h.onDone(1); });
+    .catch((e) => { h.onLog(e.message); h.onDone(1); });
 }

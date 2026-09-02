@@ -55,10 +55,10 @@ export default function TranscriptViewer({ episode, onCleaned, onToast }: Props)
       const result = await cleanEpisode(episode.slug);
       await onCleaned();
       await load('cleaned');
-      onToast(`文章已由 ${result.model} 重新整理。`);
+      onToast(`文章已重新生成（${result.model}）。`);
     } catch (error) {
       setCleanError((error as Error).message || '文章整理没有完成。');
-      onToast('重新整理失败，原文章没有被覆盖。');
+      onToast('重新整理失败，原文章未被覆盖。');
     }
     finally { setCleaning(false); }
   };
@@ -66,19 +66,19 @@ export default function TranscriptViewer({ episode, onCleaned, onToast }: Props)
   const copy = async () => {
     if (!text) return;
     await navigator.clipboard.writeText(text);
-    onToast('已复制到剪贴板。');
+    onToast('已复制。');
   };
 
   return <article className="reader">
     <header className="reader-header">
-      <div className="reader-title"><p className="kicker">已成文</p><h1>{displayName(episode)}</h1><p className="reader-meta">{episode.article ? `AI 整理稿 · ${episode.article.model} · ${episode.article.stats.paragraphs} 个自然段 · 请核对事实` : '文章 · 原始素材和初稿仍然保留'}</p></div>
+      <div className="reader-title"><p className="kicker">文章</p><h1>{displayName(episode)}</h1><p className="reader-meta">{episode.article ? `AI 整理 · ${episode.article.model} · ${episode.article.stats.paragraphs} 段 · 事实请核对原稿` : '原始素材和初稿保留备查'}</p></div>
       <div className="reader-actions"><button type="button" className="button quiet" disabled={cleaning || !episode.hasRaw} onClick={clean}>{cleaning ? '整理中' : '重新整理'}</button><button type="button" className="button quiet" disabled={!text} onClick={copy}>复制</button></div>
     </header>
     <nav className="reader-tabs" aria-label="内容版本">{tabsFor(episode).map((item) => <button key={item} type="button" className={tab === item ? 'on' : ''} onClick={() => void load(item)}>{labels[item]}</button>)}</nav>
-    {cleanError && <div className="inline-error reader-error" role="alert"><b>重新整理没有完成</b><span>{cleanError}</span><small>现在看到的仍是上一次成功保存的文章。</small></div>}
-    {tab === 'srt' && <p className="source-note">按约 3 分钟切分，仅用于定位和核对内容，不是可直接发布的视频字幕。</p>}
+    {cleanError && <div className="inline-error reader-error" role="alert"><b>重新整理失败</b><span>{cleanError}</span><small>当前显示的仍是上次保存的文章。</small></div>}
+    {tab === 'srt' && <p className="source-note">按约 3 分钟切分，仅用于定位和核对，不可直接作为视频字幕发布。</p>}
     <div className={`reader-body ${tab === 'cleaned' ? 'article' : 'source'}`}>
-      {loading ? <p className="reader-placeholder">正在打开…</p> : text ? tab === 'cleaned' ? renderArticle(text) : <pre>{text}</pre> : <p className="reader-placeholder">这一页还没有内容。</p>}
+      {loading ? <p className="reader-placeholder">正在打开…</p> : text ? tab === 'cleaned' ? renderArticle(text) : <pre>{text}</pre> : <p className="reader-placeholder">暂无内容。</p>}
     </div>
   </article>;
 }

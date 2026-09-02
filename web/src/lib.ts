@@ -71,7 +71,7 @@ export function displayName(ep: Episode) {
   if (ep.source && !/^source\.[^.]+$/i.test(ep.source)) {
     return ep.source.replace(/\.[^.]+$/, '');
   }
-  return '未命名音轨';
+  return '未命名';
 }
 
 export function displayDate(ep: Episode) {
