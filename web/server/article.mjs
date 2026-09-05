@@ -26,7 +26,7 @@ export function articleMessages(title, rawText) {
     { role: 'system', content: SYSTEM_PROMPT },
     {
       role: 'user',
-      content: `节目标题：${title || '未命名音轨'}\n\n请将下面的完整逐字稿整理成文章：\n\n${rawText}`,
+      content: `节目标题：${title || '未命名音轨'}\n\n请将下面的完整逐字稿整理成文章：\n\n${rawText}\n\n附加要求（不影响正文）：正文结束后另起一行，只输出以 <<<MAP>>> 开头的 JSON 数组，为正文每个自然段（按出现顺序、以空行分隔、不含 ##/### 标题行，引用块按一个自然段计）给出其内容在逐字稿中的起止秒数 [start, end]（根据逐字稿行首 [HH:MM:SS,mmm] 时间戳估算；无法判断填 null）。数组长度必须与自然段数一致，例如：\n<<<MAP>>> [[0, 182], [180, 375], null]`,
     },
   ];
 }
@@ -110,7 +110,8 @@ export async function generateArticle({ title, rawText, env = process.env, fetch
   const data = await response.json();
   const choice = data.choices?.[0];
   if (choice?.finish_reason === 'length') throw new Error('文章生成达到长度上限，未写入不完整结果。');
-  const { text, stats } = validateArticle(choice?.message?.content, rawText.length);
+  const { text: withMap, map } = extractMap(choice?.message?.content);
+  const { text, stats } = validateArticle(withMap, rawText.length);
   return {
     text,
     meta: {
@@ -118,6 +119,32 @@ export async function generateArticle({ title, rawText, env = process.env, fetch
       model: data.model || config.model,
       generatedAt: new Date().toISOString(),
       stats,
+      paraMap: validateMap(map, stats.paragraphs),
     },
   };
+}
+
+export function extractMap(content) {
+  const m = String(content || '').match(/<<<MAP>>>\s*(\[[\s\S]*\])\s*$/);
+  if (!m) return { text: String(content || ''), map: null };
+  let map = null;
+  try {
+    const parsed = JSON.parse(m[1]);
+    if (Array.isArray(parsed)) map = parsed;
+  } catch {}
+  return { text: String(content || '').slice(0, m.index).trim(), map };
+}
+
+export function validateMap(map, paragraphCount) {
+  if (!Array.isArray(map) || map.length !== paragraphCount) return null;
+  const clean = map.map((entry) => {
+    if (entry === null) return null;
+    if (!Array.isArray(entry) || entry.length !== 2) return null;
+    const start = Number(entry[0]);
+    const end = Number(entry[1]);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start) return null;
+    return [start, end];
+  });
+  if (clean.every((entry) => entry === null)) return null;
+  return clean;
 }

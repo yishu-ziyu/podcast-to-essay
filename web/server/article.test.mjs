@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { articleConfig, articleProviderError, articleStructure, generateArticle, normalizeArticle, validateArticle } from './article.mjs';
+import { articleConfig, articleProviderError, articleStructure, extractMap, generateArticle, normalizeArticle, validateArticle, validateMap } from './article.mjs';
 
 test('articleConfig refuses to run without a server-side token', () => {
   assert.throws(() => articleConfig({}), /还没有配置文章整理服务/);
@@ -44,4 +44,41 @@ test('generateArticle returns provenance only for a structured article', async (
   assert.equal(result.meta.model, 'step-3.7-flash');
   assert.equal(result.meta.stats.headings, 3);
   assert.equal(result.meta.stats.paragraphs, 9);
+  assert.equal(result.meta.paraMap, null);
+});
+
+test('extractMap splits the trailing map line from the article text', () => {
+  const { text, map } = extractMap('## 第一节\n\n正文。\n<<<MAP>>> [[0, 182], null]');
+  assert.equal(text, '## 第一节\n\n正文。');
+  assert.deepEqual(map, [[0, 182], null]);
+});
+
+test('extractMap returns null map when the marker is absent or broken', () => {
+  assert.deepEqual(extractMap('正文。').map, null);
+  assert.deepEqual(extractMap('正文。\n<<<MAP>>> not json').map, null);
+});
+
+test('validateMap accepts ranges, rejects count mismatch and garbage', () => {
+  assert.deepEqual(validateMap([[0, 10], null], 2), [[0, 10], null]);
+  assert.equal(validateMap([[0, 10]], 2), null);
+  assert.equal(validateMap([[10, 5], null], 2), null);
+  assert.equal(validateMap([null, null], 2), null);
+  assert.equal(validateMap('nope', 2), null);
+});
+
+test('generateArticle stores the paragraph map and keeps timestamps out of validation', async () => {
+  const section = (n) => `## 第${n}节\n\n` + Array.from({ length: 3 }, (_, i) => `这是第${n}节第${i + 1}段，${'内容'.repeat(100)}。`).join('\n\n');
+  const content = [section(1), section(2), section(3)].join('\n\n');
+  const map = Array.from({ length: 9 }, (_, i) => [i * 100, i * 100 + 90]);
+  const result = await generateArticle({
+    title: '测试节目',
+    rawText: '逐字稿'.repeat(8_000),
+    env: { STEP_API_KEY: 'test-token', STEP_ARTICLE_MODEL: 'step-3.7-flash' },
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({ model: 'step-3.7-flash', choices: [{ finish_reason: 'stop', message: { content: `${content}\n<<<MAP>>> ${JSON.stringify(map)}` } }] }),
+    }),
+  });
+  assert.deepEqual(result.meta.paraMap, map);
+  assert.ok(!result.text.includes('<<<MAP>>>'));
 });
