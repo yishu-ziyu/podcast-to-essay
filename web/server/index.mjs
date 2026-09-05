@@ -389,17 +389,26 @@ async function handleApi(req, res, url) {
     return streamIngest(res, link, ownerTag);
   }
 
-  // POST /api/episodes  { slug } (owner only; guests import via /ingests)
+  // POST /api/episodes  { slug } — guests import local files through this
+  // route too: the episode is tagged guest:<gid>, counts against the ingest
+  // quota, and stays invisible to other visitors.
   if (method === 'POST' && parts[1] === 'episodes' && parts.length === 2) {
-    if (!isOwner(req)) return sendJSON(res, 403, { error: '游客请直接用链接导入。' });
+    const gid = guestId(req, res);
     const body = await readBody(req);
     const slug = (body.slug || '').toString().trim();
     if (!SAFE_SLUG.test(slug)) return sendJSON(res, 400, { error: 'invalid slug' });
     const dir = path.join(RAW, slug);
     if (fs.existsSync(dir)) return sendJSON(res, 409, { error: 'episode exists' });
+    if (!isOwner(req)) {
+      const err = quotaTake(req, gid, 'ingest');
+      if (err) return sendJSON(res, 429, { error: err });
+    }
     await fsp.mkdir(dir, { recursive: true });
     await fsp.writeFile(path.join(dir, 'transcribe.sh'), transcribeTemplate(), 'utf8');
     await fsp.chmod(path.join(dir, 'transcribe.sh'), 0o755);
+    if (!isOwner(req)) {
+      await fsp.writeFile(path.join(dir, 'owner.json'), JSON.stringify({ owner: `guest:${gid}` }, null, 2), 'utf8');
+    }
     return sendJSON(res, 201, { ok: true, slug });
   }
 
@@ -430,9 +439,10 @@ async function handleApi(req, res, url) {
       return sendJSON(res, 200, { ok: true, title });
     }
 
-    // POST /api/episodes/:slug/audio   (raw bytes; ASCII name in x-filename; owner only)
+    // POST /api/episodes/:slug/audio   (raw bytes; ASCII name in x-filename;
+    // guests may upload into episodes they created — canAccess already
+    // constrains them to their own entries)
     if (method === 'POST' && parts[3] === 'audio') {
-      if (!isOwner(req)) return sendJSON(res, 403, { error: '游客请直接用链接导入。' });
       if (!fs.existsSync(dir)) return sendJSON(res, 404, { error: 'episode not found' });
       const rawName = (req.headers['x-filename'] || 'source.mp3').toString();
       let fname = rawName;
