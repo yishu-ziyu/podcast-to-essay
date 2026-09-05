@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, FormEvent } from 'react';
+import { useEffect, useState, useCallback, useRef, FormEvent } from 'react';
 import { Episode, listEpisodes, deleteEpisode, getSession, login, Session } from './api';
 import EpisodeList from './components/EpisodeList';
 import Workbench from './components/Workbench';
@@ -33,6 +33,20 @@ export default function App() {
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [toastLeaving, setToastLeaving] = useState(false);
+  const toastTimer = useRef<number | null>(null);
+
+  const showToast = useCallback((msg: string | null) => {
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    setToastLeaving(false);
+    setToast(msg);
+  }, []);
+
+  const dismissToast = useCallback(() => {
+    if (!toast || toastLeaving) return;
+    setToastLeaving(true);
+    toastTimer.current = window.setTimeout(() => { setToast(null); setToastLeaving(false); }, 130);
+  }, [toast, toastLeaving]);
   const [session, setSession] = useState<Session | null>(null);
   const [loginOpen, setLoginOpen] = useState(false);
 
@@ -118,21 +132,21 @@ export default function App() {
         )}
         <div className="stage">
           {reading && current ? (
-            <TranscriptViewer episode={current} onCleaned={refresh} onToast={setToast} />
+            <TranscriptViewer episode={current} onCleaned={refresh} onToast={showToast} />
           ) : (
             <Workbench
               episode={current}
               episodes={episodes}
               onChanged={refresh}
               onSelect={setSelected}
-              onToast={setToast}
+              onToast={showToast}
             />
           )}
         </div>
       </main>
 
       {loginOpen && <OwnerLogin onClose={() => setLoginOpen(false)} onLoggedIn={async () => { setLoginOpen(false); setSession(await getSession()); await refresh(); }} />}
-      {toast && <button type="button" className="toast" onClick={() => setToast(null)}>{toast}</button>}
+      {toast && <button type="button" className={`toast${toastLeaving ? ' leaving' : ''}`} onClick={dismissToast}>{toast}</button>}
     </div>
   );
 }
