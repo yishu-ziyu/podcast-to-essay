@@ -123,7 +123,6 @@ export default function App() {
             <Workbench
               episode={current}
               episodes={episodes}
-              owner={session.owner}
               onChanged={refresh}
               onSelect={setSelected}
               onToast={setToast}
