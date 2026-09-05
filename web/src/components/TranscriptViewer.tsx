@@ -1,6 +1,6 @@
-import { useEffect, useState, ReactNode } from 'react';
+import { useEffect, useState, useRef, ReactNode } from 'react';
 import { Episode, getTranscript, cleanEpisode } from '../api';
-import { displayName } from '../lib';
+import { displayName, articleUnits, parseSrt, SrtCue } from '../lib';
 
 type Tab = 'cleaned' | 'raw' | 'srt';
 
@@ -13,23 +13,20 @@ function tabsFor(episode: Episode): Tab[] {
 }
 
 function renderArticle(text: string): ReactNode {
-  const nodes: ReactNode[] = [];
-  let paragraph: string[] = [];
-  const flush = () => {
-    if (paragraph.length) nodes.push(<p key={`p-${nodes.length}`}>{paragraph.join(' ')}</p>);
-    paragraph = [];
-  };
+  return articleUnits(text).map((u, i) => {
+    if (u.kind === 'h2') return <h2 key={`h2-${i}`}>{u.text}</h2>;
+    if (u.kind === 'h3') return <h3 key={`h3-${i}`}>{u.text}</h3>;
+    if (u.kind === 'quote') return <blockquote key={`q-${i}`}>{u.text}</blockquote>;
+    return <p key={`p-${i}`}>{u.text}</p>;
+  });
+}
 
-  for (const rawLine of text.trim().split('\n')) {
-    const line = rawLine.trim();
-    if (!line) { flush(); continue; }
-    if (/^###\s+/.test(line)) { flush(); nodes.push(<h3 key={`h3-${nodes.length}`}>{line.replace(/^###\s+/, '')}</h3>); continue; }
-    if (/^##\s+/.test(line)) { flush(); nodes.push(<h2 key={`h2-${nodes.length}`}>{line.replace(/^##\s+/, '')}</h2>); continue; }
-    if (/^>\s+/.test(line)) { flush(); nodes.push(<blockquote key={`q-${nodes.length}`}>{line.replace(/^>\s+/, '')}</blockquote>); continue; }
-    paragraph.push(line);
-  }
-  flush();
-  return nodes;
+type ParaMap = ([number, number] | null)[] | null | undefined;
+
+function validMap(map: ParaMap): ([number, number] | null)[] | null {
+  if (!Array.isArray(map) || !map.length) return null;
+  if (!map.every((e) => e === null || (Array.isArray(e) && e.length === 2 && Number.isFinite(e[0]) && Number.isFinite(e[1]) && e[0] >= 0 && e[1] >= e[0]))) return null;
+  return map;
 }
 
 export default function TranscriptViewer({ episode, onCleaned, onToast }: Props) {
@@ -38,6 +35,13 @@ export default function TranscriptViewer({ episode, onCleaned, onToast }: Props)
   const [loading, setLoading] = useState(true);
   const [cleaning, setCleaning] = useState(false);
   const [cleanError, setCleanError] = useState<string | null>(null);
+  const [fresh, setFresh] = useState(false);
+  const [verify, setVerify] = useState(false);
+  const [srtText, setSrtText] = useState('');
+  const [selPara, setSelPara] = useState<number | null>(null);
+  const [selCue, setSelCue] = useState<number | null>(null);
+  const [openCue, setOpenCue] = useState<number | null>(null);
+  const firstAt = useRef(episode.cleanedAt);
 
   const load = async (next: Tab) => {
     setTab(next); setLoading(true);
@@ -47,6 +51,15 @@ export default function TranscriptViewer({ episode, onCleaned, onToast }: Props)
   };
 
   useEffect(() => { void load('cleaned'); }, [episode.slug]);
+
+  useEffect(() => {
+    if (episode.cleanedAt && episode.cleanedAt !== firstAt.current) {
+      firstAt.current = episode.cleanedAt;
+      setFresh(true);
+      const t = window.setTimeout(() => setFresh(false), 1000);
+      return () => window.clearTimeout(t);
+    }
+  }, [episode.cleanedAt]);
 
   const clean = async () => {
     if (!episode.hasRaw) return;
@@ -69,16 +82,67 @@ export default function TranscriptViewer({ episode, onCleaned, onToast }: Props)
     onToast('已复制。');
   };
 
+  const paraMap = validMap(episode.article?.paraMap);
+  const cues: SrtCue[] = verify ? parseSrt(srtText) : [];
+  const cuesForPara = (p: number): number[] => {
+    const range = paraMap?.[p];
+    if (!range) return [];
+    return cues.filter((c) => c.start < range[1] && c.end > range[0]).map((c) => c.index);
+  };
+  const paraForCue = (cue: SrtCue): number | null => {
+    if (!paraMap) return null;
+    const mid = (cue.start + cue.end) / 2;
+    const i = paraMap.findIndex((r) => r && mid >= r[0] && mid <= r[1]);
+    return i < 0 ? null : i;
+  };
+  const toggleVerify = async () => {
+    if (verify) { setVerify(false); setSelPara(null); setSelCue(null); setOpenCue(null); return; }
+    if (tab !== 'cleaned') await load('cleaned');
+    setVerify(true);
+    if (episode.hasSrt && !srtText) {
+      try { setSrtText(await getTranscript(episode.slug, 'srt')); }
+      catch { setSrtText(''); }
+    }
+  };
+  const pickPara = (p: number) => { setSelPara(p); setSelCue(null); };
+  const pickCue = (cue: SrtCue) => {
+    setOpenCue((open) => (open === cue.index ? null : cue.index));
+    const p = paraForCue(cue);
+    if (p === null) { setSelCue(cue.index); setSelPara(null); return; }
+    setSelPara(p); setSelCue(null);
+  };
+
+  const units = verify ? articleUnits(text) : [];
+
   return <article className="reader">
     <header className="reader-header">
-      <div className="reader-title"><p className="kicker">文章</p><h1>{displayName(episode)}</h1><p className="reader-meta">{episode.article ? `AI 整理 · ${episode.article.model} · ${episode.article.stats.paragraphs} 段 · 事实请核对原稿` : '原始素材和初稿保留备查'}</p></div>
-      <div className="reader-actions"><button type="button" className="button quiet" disabled={cleaning || !episode.hasRaw} onClick={clean}>{cleaning ? '整理中' : '重新整理'}</button><button type="button" className="button quiet" disabled={!text} onClick={copy}>复制</button></div>
+      <div className="reader-title"><p className="kicker">文章</p><h1>{displayName(episode)}</h1><p className="reader-meta">{episode.article ? `AI 整理 · ${episode.article.model} · ${episode.article.stats.paragraphs} 段 · 事实请核对原稿` : '原始素材和初稿保留备查'}</p>{fresh && <span className="chip ok blink">已更新</span>}</div>
+      <div className="reader-actions"><button type="button" className="button quiet" disabled={!episode.hasSrt} onClick={() => void toggleVerify()}>{verify ? '退出核对' : '核对'}</button><button type="button" className="button quiet" disabled={cleaning || !episode.hasRaw} onClick={clean}>{cleaning ? '整理中' : '重新整理'}</button><button type="button" className="button quiet" disabled={!text} onClick={copy}>复制</button></div>
     </header>
     <nav className="reader-tabs" aria-label="内容版本">{tabsFor(episode).map((item) => <button key={item} type="button" className={tab === item ? 'on' : ''} onClick={() => void load(item)}>{labels[item]}</button>)}</nav>
     {cleanError && <div className="inline-error reader-error" role="alert"><b>重新整理失败</b><span>{cleanError}</span><small>当前显示的仍是上次保存的文章。</small></div>}
-    {tab === 'srt' && <p className="source-note">按约 3 分钟切分，仅用于定位和核对，不可直接作为视频字幕发布。</p>}
-    <div className={`reader-body ${tab === 'cleaned' ? 'article' : 'source'}`}>
+    {tab === 'srt' && !verify && <p className="source-note">按约 3 分钟切分，仅用于定位和核对，不可直接作为视频字幕发布。</p>}
+    {verify ? <div>
+      <p className="verify-hint">{paraMap ? '点击任意一段，正文与分段稿互指定位。' : '暂无段落映射：两边独立浏览，重新整理可生成映射。'}</p>
+      <div className="verify-grid">
+        <div className="verify-art">{units.map((u, i) => {
+          if (u.kind === 'h2') return <h2 key={`h2-${i}`}>{u.text}</h2>;
+          if (u.kind === 'h3') return <h3 key={`h3-${i}`}>{u.text}</h3>;
+          const synced = u.para !== null && (selPara === u.para || (selCue !== null && cues[selCue] && paraForCue(cues[selCue]) === u.para));
+          return <p key={`p-${i}`} className={`ap${u.kind === 'quote' ? ' q' : ''}${synced ? ' sync' : ''}`} onClick={() => { if (u.para !== null) pickPara(u.para); }}>{u.text}</p>;
+        })}</div>
+        <div className="verify-seg">{cues.length ? cues.map((c) => {
+          const synced = selCue === c.index || (selPara !== null && cuesForPara(selPara).includes(c.index));
+          return <div key={c.index} className={`cue${synced ? ' sync' : ''}`} onClick={() => pickCue(c)}><span className="tc">段 {String(c.index + 1).padStart(2, '0')} · {fmtTime(c.start)}</span><span className="tx">{openCue === c.index ? c.text : c.text.length > 120 ? c.text.slice(0, 120) + '…' : c.text}</span></div>;
+        }) : <p className="verify-hint">暂无分段稿。</p>}</div>
+      </div>
+    </div> : <div className={`reader-body ${tab === 'cleaned' ? 'article' : 'source'}`}>
       {loading ? <p className="reader-placeholder">正在打开…</p> : text ? tab === 'cleaned' ? renderArticle(text) : <pre>{text}</pre> : <p className="reader-placeholder">暂无内容。</p>}
-    </div>
+    </div>}
   </article>;
+}
+
+function fmtTime(sec: number): string {
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.floor(sec % 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }

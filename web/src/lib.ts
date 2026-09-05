@@ -85,3 +85,47 @@ export function currentStep(ep: Episode | null): 1 | 2 | 3 {
   if (!ep.hasRaw) return 2;
   return 3;
 }
+
+export type ArtUnitKind = 'h2' | 'h3' | 'quote' | 'p';
+export interface ArtUnit { kind: ArtUnitKind; text: string; para: number | null; }
+
+/** Must enumerate identically to server articleStructure(), or the paragraph map misaligns. */
+export function articleUnits(text: string): ArtUnit[] {
+  const units: ArtUnit[] = [];
+  let para = 0;
+  for (const block of String(text || '').split(/\n\s*\n/)) {
+    const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) continue;
+    const first = lines[0];
+    if (/^###\s+\S/.test(first)) { units.push({ kind: 'h3', text: first.replace(/^###\s+/, ''), para: null }); continue; }
+    if (/^##\s+\S/.test(first)) { units.push({ kind: 'h2', text: first.replace(/^##\s+/, ''), para: null }); continue; }
+    const body = lines.map((l) => l.replace(/^>\s?/, '')).join(' ');
+    if (lines.every((l) => /^>\s?/.test(l))) units.push({ kind: 'quote', text: body, para: para++ });
+    else units.push({ kind: 'p', text: body, para: para++ });
+  }
+  return units;
+}
+
+export interface SrtCue { index: number; start: number; end: number; text: string; }
+
+export function parseTimecode(tc: string): number {
+  const m = String(tc || '').trim().match(/(\d+):(\d{2}):(\d{2})[,.](\d{1,3})/);
+  if (!m) return NaN;
+  return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) + Number(`0.${m[4]}`);
+}
+
+export function parseSrt(srt: string): SrtCue[] {
+  const cues: SrtCue[] = [];
+  for (const block of String(srt || '').split(/\n\s*\n/)) {
+    const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length < 2) continue;
+    const tline = lines.find((l) => l.includes('-->'));
+    if (!tline) continue;
+    const [a, b] = tline.split('-->').map((s) => parseTimecode(s));
+    if (!Number.isFinite(a) || !Number.isFinite(b) || a > b) continue;
+    const text = lines.slice(lines.indexOf(tline) + 1).join(' ').trim();
+    if (!text) continue;
+    cues.push({ index: cues.length, start: a, end: b, text });
+  }
+  return cues;
+}

@@ -22,6 +22,7 @@ export interface Episode {
     model: string;
     generatedAt: string;
     stats: { chars: number; paragraphs: number; headings: number };
+    paraMap?: ([number, number] | null)[] | null;
   } | null;
   status: EpisodeStatus;
 }
