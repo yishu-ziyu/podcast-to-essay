@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { articleConfig, articleProviderError, articleStructure, extractMap, generateArticle, normalizeArticle, validateArticle, validateMap } from './article.mjs';
+import { articleConfig, articleProviderError, articleStructure, extractMap, generateArticle, minimumArticleLength, normalizeArticle, validateArticle, validateMap } from './article.mjs';
 
 test('articleConfig refuses to run without a server-side token', () => {
   assert.throws(() => articleConfig({}), /还没有配置文章整理服务/);
@@ -19,6 +19,18 @@ test('articleStructure separates a heading from the paragraph on the next line',
   const structure = articleStructure('## 第一节\n紧跟标题的正文。\n\n第二段。');
   assert.equal(structure.headings.length, 1);
   assert.deepEqual(structure.paragraphs, ['紧跟标题的正文。', '第二段。']);
+});
+
+test('validateArticle scales the length floor down for a short transcript', () => {
+  assert.equal(minimumArticleLength(457), 200);
+  assert.equal(minimumArticleLength(2_000), 500);
+  assert.equal(minimumArticleLength(30_000), 1_500);
+
+  // 457 字逐字稿的忠实整理在 500 字上下浮动，不能再被固定门槛拦掉。
+  const article = `## 第一节\n\n${'内容'.repeat(150)}。`;
+  assert.equal(validateArticle(article, 457).stats.chars, article.length);
+  assert.throws(() => validateArticle('整理完成。', 457), /过短/);
+  assert.throws(() => validateArticle('内容'.repeat(150), 2_000), /过短/);
 });
 
 test('articleProviderError turns provider responses into actionable Chinese', () => {

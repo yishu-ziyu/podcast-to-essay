@@ -66,7 +66,7 @@ export function articleStructure(text) {
 export function validateArticle(content, rawLength = 0) {
   const text = normalizeArticle(content);
   const { headings, paragraphs } = articleStructure(text);
-  const minChars = rawLength > 20_000 ? 1_500 : 500;
+  const minChars = minimumArticleLength(rawLength);
 
   if (/\[\d{2}:\d{2}:\d{2}(?:,\d{3})?\]/.test(text)) throw new Error('文章仍含时间戳，未写入结果。');
   if (/(?:\*\*)?Speaker\s*\d+\s*[：:]/i.test(text)) throw new Error('文章仍含 ASR 说话人标签，未写入结果。');
@@ -75,6 +75,13 @@ export function validateArticle(content, rawLength = 0) {
   if (rawLength > 20_000 && paragraphs.length < 8) throw new Error(`文章段落结构不足（检测到 ${paragraphs.length} 段），未写入结果。`);
 
   return { text, stats: { chars: text.length, paragraphs: paragraphs.length, headings: headings.length } };
+}
+
+// 短音频的逐字稿可能不到 500 字，固定下限会让忠实整理必然或随机失败。
+// 下限随逐字稿长度收缩，长节目仍走原有的 1500 字门槛。
+export function minimumArticleLength(rawLength = 0) {
+  if (rawLength > 20_000) return 1_500;
+  return Math.max(200, Math.min(500, Math.round(rawLength * 0.4)));
 }
 
 export function articleProviderError(status) {
