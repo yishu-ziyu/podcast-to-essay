@@ -73,7 +73,7 @@ export default function App() {
   useEffect(() => { if (session) void refresh(); }, [refresh, session]);
 
   const handleDelete = async (slug: string) => {
-    if (!confirm('删除该条目及其音轨？已生成的文章会保留。')) return;
+    if (!confirm('删除该条目、音轨和已生成的文章？此操作不可撤销。')) return;
     try {
       await deleteEpisode(slug);
       setToast('已删除。');
