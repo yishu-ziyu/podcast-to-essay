@@ -469,6 +469,7 @@ async function handleApi(req, res, url) {
       if (!isOwner(req)) return sendJSON(res, 403, { error: '仅所有者可删除。' });
       if (!fs.existsSync(dir)) return sendJSON(res, 404, { error: 'not found' });
       await fsp.rm(dir, { recursive: true, force: true });
+      await fsp.rm(path.join(CLEANED, `${slug}.md`), { force: true });
       return sendJSON(res, 200, { ok: true });
     }
 
