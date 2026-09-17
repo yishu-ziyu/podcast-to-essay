@@ -290,13 +290,51 @@ function guestId(req, res) {
   return id;
 }
 
+// Quota keys embed the visitor IP, so they must not use the proxy address. Online the last hop
+// is a Vercel edge node; only the first X-Forwarded-For entry is the real visitor. Direct
+// requests have no XFF and fall back to the X-Real-IP nginx writes.
 function clientIp(req) {
-  return String(req.headers['x-real-ip'] || '').trim() || req.socket.remoteAddress || '';
+  const forwarded = String(req.headers['x-forwarded-for'] || '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return forwarded[0] || String(req.headers['x-real-ip'] || '').trim() || req.socket.remoteAddress || '';
 }
 
+const QUOTA_FILE = path.join(ROOT, 'quota.json');
 const QUOTA = new Map(); // key -> { date, ingest, transcribe, clean }
+
+/** Only today's counters survive; the day rollover also drops stale keys. */
+function pruneQuota() {
+  const today = todayStamp();
+  for (const [key, q] of QUOTA) if (!q || q.date !== today) QUOTA.delete(key);
+}
+
+async function loadQuota() {
+  try {
+    const saved = JSON.parse(await fsp.readFile(QUOTA_FILE, 'utf8'));
+    const today = todayStamp();
+    for (const [key, q] of Object.entries(saved)) {
+      if (q && q.date === today) QUOTA.set(key, q);
+    }
+  } catch {
+    // First run has no quota file yet.
+  }
+}
+
+let quotaWritePending = null;
+function persistQuota() {
+  if (quotaWritePending) return;
+  quotaWritePending = setTimeout(() => {
+    quotaWritePending = null;
+    pruneQuota();
+    fsp.writeFile(QUOTA_FILE, JSON.stringify(Object.fromEntries(QUOTA), null, 2), 'utf8').catch(() => {});
+  }, 500);
+  quotaWritePending.unref?.();
+}
+
 function quotaEntry(key) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayStamp();
   let q = QUOTA.get(key);
   if (!q || q.date !== today) {
     q = { date: today, ingest: 0, transcribe: 0, clean: 0 };
@@ -313,13 +351,17 @@ function quotaLeft(key) {
   };
 }
 function quotaTake(req, gid, kind) {
-  const left = quotaLeft(`${clientIp(req)}|${gid}`);
+  const key = `${clientIp(req)}|${gid}`;
+  const left = quotaLeft(key);
   if (left[kind] <= 0) {
     return '游客每日额度已用完，明天再来。长期或大量使用建议自部署。';
   }
-  quotaEntry(`${clientIp(req)}|${gid}`)[kind]++;
+  quotaEntry(key)[kind]++;
+  persistQuota();
   return null;
 }
+
+await loadQuota();
 
 async function ownerOf(dir) {
   const m = await readJSON(path.join(dir, 'owner.json'));

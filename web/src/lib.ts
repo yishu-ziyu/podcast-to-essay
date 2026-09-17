@@ -1,4 +1,4 @@
-import { Episode } from './api';
+import type { Episode } from './api';
 
 export function todayStamp() {
   const d = new Date();
@@ -89,20 +89,36 @@ export function currentStep(ep: Episode | null): 1 | 2 | 3 {
 export type ArtUnitKind = 'h2' | 'h3' | 'quote' | 'p';
 export interface ArtUnit { kind: ArtUnitKind; text: string; para: number | null; }
 
-/** Must enumerate identically to server articleStructure(), or the paragraph map misaligns. */
+/**
+ * Must enumerate identically to server articleStructure(), or the paragraph map misaligns.
+ * Headings are matched per line, so a heading may be followed by body lines without a blank
+ * line between them — those lines still belong to the paragraph right after the heading.
+ */
 export function articleUnits(text: string): ArtUnit[] {
   const units: ArtUnit[] = [];
   let para = 0;
-  for (const block of String(text || '').split(/\n\s*\n/)) {
-    const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
-    if (!lines.length) continue;
-    const first = lines[0];
-    if (/^###\s+\S/.test(first)) { units.push({ kind: 'h3', text: first.replace(/^###\s+/, ''), para: null }); continue; }
-    if (/^##\s+\S/.test(first)) { units.push({ kind: 'h2', text: first.replace(/^##\s+/, ''), para: null }); continue; }
-    const body = lines.map((l) => l.replace(/^>\s?/, '')).join(' ');
-    if (lines.every((l) => /^>\s?/.test(l))) units.push({ kind: 'quote', text: body, para: para++ });
-    else units.push({ kind: 'p', text: body, para: para++ });
+  let buffer: string[] = [];
+
+  const flush = () => {
+    if (!buffer.length) return;
+    const quoted = buffer.every((line) => /^>\s?/.test(line));
+    const body = buffer.map((line) => line.replace(/^>\s?/, '')).join(' ').trim();
+    units.push({ kind: quoted ? 'quote' : 'p', text: body, para: para++ });
+    buffer = [];
+  };
+
+  for (const rawLine of String(text || '').split('\n')) {
+    const line = rawLine.trim();
+    if (!line) { flush(); continue; }
+    const heading = line.match(/^(#{2,3})\s+(\S.*)$/);
+    if (heading) {
+      flush();
+      units.push({ kind: heading[1] === '###' ? 'h3' : 'h2', text: heading[2].trim(), para: null });
+      continue;
+    }
+    buffer.push(line);
   }
+  flush();
   return units;
 }
 
