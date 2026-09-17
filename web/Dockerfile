@@ -2,7 +2,9 @@
 FROM node:22-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# --ignore-scripts: the build only needs vite/tsc, but electron's postinstall
+# downloads ~100MB from GitHub and stalls builds on CN servers.
+RUN npm ci --ignore-scripts
 COPY . .
 RUN npm run build
 
