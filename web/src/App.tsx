@@ -77,6 +77,8 @@ export default function App() {
     try {
       await deleteEpisode(slug);
       setToast('已删除。');
+      // 列表不会自己更新：删完不刷新的话，条目仍留在资料库里，看起来像没删掉。
+      await refresh();
     } catch (error) {
       setToast('删除失败：' + (error as Error).message);
     }
