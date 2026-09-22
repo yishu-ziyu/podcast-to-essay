@@ -91,6 +91,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .notice p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .notice.error { border-color: #ecd5d7; }
 .notice.error b, .notice.error p { color: var(--danger); }
+.notice .diagnostic { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
 .spinner { width: 18px; height: 18px; flex: 0 0 auto; border: 2px solid #eee4dd; border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 

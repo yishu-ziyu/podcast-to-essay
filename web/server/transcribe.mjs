@@ -51,9 +51,9 @@ async function transcribeChunk(file) {
     }),
   });
   if (!res.ok) {
-    if (res.status === 402) throw new Error('转录服务额度已用尽。补充额度后可以从这一段继续。');
-    if (res.status === 401 || res.status === 403) throw new Error('转录服务授权失效，请检查设置后重试。');
-    throw new Error('转录服务暂时没有响应，请稍后重试。');
+    if (res.status === 402) throw coded('transcription_quota_exhausted', '转录服务额度已用尽。补充额度后可以从这一段继续。');
+    if (res.status === 401 || res.status === 403) throw coded('transcription_auth_failed', '转录服务授权失效，请检查设置后重试。');
+    throw coded('internal_error', '转录服务暂时没有响应，请稍后重试。');
   }
   const events = (await res.text())
     .split('\n')
@@ -64,20 +64,27 @@ async function transcribeChunk(file) {
   for (const event of events) {
     let data;
     try { data = JSON.parse(event); } catch { continue; }
-    if (data.type === 'error') throw new Error(data.message || '转录服务返回错误。');
+    if (data.type === 'error') throw coded('internal_error', '转录服务返回错误。');
     if (data.type === 'transcript.text.delta') text += String(data.delta || '');
     if (data.type === 'transcript.text.done') text = String(data.text || text);
   }
-  if (!text.trim()) throw new Error('转录服务没有返回文字，请重试。');
+  if (!text.trim()) throw coded('internal_error', '转录服务没有返回文字，请重试。');
   return text.trim();
 }
 
+function coded(code, userMessage) {
+  const err = new Error(userMessage);
+  err.code = code;
+  err.userMessage = userMessage;
+  return err;
+}
+
 async function main() {
-  if (!dir) throw new Error('缺少期次目录');
-  if (!key) throw new Error('没有找到 Token Plan 密钥，暂时不能转录。');
+  if (!dir) throw coded('internal_error', '缺少期次目录');
+  if (!key) throw coded('transcription_auth_failed', '还没有配置转录服务，暂时不能转录。');
   const files = await fs.readdir(dir);
   const source = files.find((name) => /^source\./.test(name));
-  if (!source) throw new Error('这一卷没有音轨。');
+  if (!source) throw coded('internal_error', '这一卷没有音轨。');
   const chunks = path.join(dir, 'chunks');
   await fs.mkdir(chunks, { recursive: true });
   let parts = (await fs.readdir(chunks)).filter((name) => /^chunk_\d+\.mp3$/.test(name)).sort();
@@ -109,6 +116,11 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('❌ ' + err.message);
+  const payload = {
+    code: err.code || 'internal_error',
+    userMessage: err.userMessage || err.message || '转录没有完成。',
+  };
+  console.log(`@@error ${JSON.stringify(payload)}`);
+  console.error(`❌ ${payload.userMessage}`);
   process.exitCode = 1;
 });

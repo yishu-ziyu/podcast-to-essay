@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Episode, cleanEpisode, controlTranscription, createEpisode, ingestUrlStream, transcribeStream, updateEpisodeTitle, uploadAudio } from '../api';
+import { Episode, JobError, JobView, cleanEpisode, continueJob, controlTranscription, createEpisode, getJob, jobSettled, listJobs, startTranscription, submitIngest, updateEpisodeTitle, uploadAudio, watchJob } from '../api';
 import { displayName, extractUrl, slugFromFile } from '../lib';
 
 interface Props {
@@ -55,7 +55,7 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
   const [over, setOver] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState<string | null>(null);
-  const [importFail, setImportFail] = useState<string | null>(null);
+  const [importFail, setImportFail] = useState<{ message: string; diagnosticId?: string; jobId?: string; continuable?: boolean } | null>(null);
   const [transcribing, setTranscribing] = useState(false);
   const [paused, setPaused] = useState(false);
   const [controlling, setControlling] = useState(false);
@@ -65,6 +65,66 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
   const [titleDraft, setTitleDraft] = useState('');
   const [savingTitle, setSavingTitle] = useState(false);
 
+  const watchStop = useRef<(() => void) | null>(null);
+
+  const applyJob = (job: JobView, resolve?: (job: JobView) => void, reject?: (error: Error) => void) => {
+    setImportProgress(job.label || '服务器已接收');
+    if (!jobSettled(job)) return;
+    watchStop.current?.();
+    watchStop.current = null;
+    if (job.state === 'succeeded') resolve?.(job);
+    else if (job.state === 'interrupted') {
+      const error = new Error('任务因服务重启中断，已完成内容仍在，可以继续。') as Error & { jobId?: string; continuable?: boolean };
+      error.jobId = job.id;
+      error.continuable = true;
+      reject?.(error);
+    } else {
+      const error = new Error(job.error?.userMessage || '导入没有完成');
+      (error as Error & { failure?: JobError }).failure = job.error || undefined;
+      reject?.(error);
+    }
+  };
+
+  const follow = (job: JobView) => new Promise<JobView>((resolve, reject) => {
+    watchStop.current?.();
+    watchStop.current = watchJob(job.id, (next) => applyJob(next, resolve, reject));
+  });
+
+  useEffect(() => {
+    let stop = false;
+    void (async () => {
+      const jobs = await listJobs().catch(() => [] as JobView[]);
+      if (stop) return;
+      const active = jobs.find((item) => item.type === 'ingest' && ['queued', 'running', 'paused', 'interrupted'].includes(item.state));
+      const savedId = sessionStorage.getItem('p2e.job');
+      const saved = !active && savedId ? await getJob(savedId).catch(() => null) : null;
+      const job = active || (saved?.type === 'ingest' && saved.state === 'failed' ? saved : null);
+      if (!job || stop) return;
+      if (job.state === 'interrupted') {
+        setImportFail({ message: '任务因服务重启中断，已完成内容仍在，可以继续。', jobId: job.id, continuable: true });
+        return;
+      }
+      if (job.state === 'failed') {
+        setImportFail({ message: job.error?.userMessage || '导入没有完成', diagnosticId: job.error?.diagnosticId });
+        return;
+      }
+      setImporting(true);
+      setImportProgress(job.label || '服务器已接收');
+      try {
+        const done = await follow(job);
+        if (stop) return;
+        sessionStorage.removeItem('p2e.job');
+        await onChanged();
+        onSelect(done.episodeSlug);
+      } catch (error) {
+        const failed = error as Error & { failure?: JobError; jobId?: string; continuable?: boolean };
+        if (!stop) setImportFail({ message: failed.message, diagnosticId: failed.failure?.diagnosticId, jobId: failed.jobId, continuable: failed.continuable });
+      } finally {
+        if (!stop) { setImporting(false); setImportProgress(null); }
+      }
+    })();
+    return () => { stop = true; watchStop.current?.(); };
+  }, [onChanged, onSelect]);
   const serverState = episode?.transcription?.state;
   const isWorking = transcribing || serverState === 'running' || serverState === 'paused';
   const isPaused = paused || serverState === 'paused';
@@ -115,7 +175,7 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
       onSelect(slug);
       onToast('素材已导入。');
     } catch (error) {
-      setImportFail((error as Error).message || '上传失败');
+      setImportFail({ message: (error as Error).message || '上传失败' });
     } finally {
       setImporting(false); setImportProgress(null);
       if (fileRef.current) fileRef.current.value = '';
@@ -124,24 +184,45 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
 
   const takeUrl = async (raw: string) => {
     const url = extractUrl(raw);
-    if (!url) { setImportFail('请输入完整链接。'); return; }
+    if (!url) { setImportFail({ message: '请输入完整链接。' }); return; }
     lastRef.current = { kind: 'url', url };
-    setImporting(true); setImportFail(null); setImportProgress('正在读取素材信息…');
+    setImporting(true); setImportFail(null); setImportProgress('服务器已接收');
     try {
-      let readySlug = '';
-      await new Promise<void>((resolve, reject) => {
-        ingestUrlStream(url, {
-          onProgress: setImportProgress,
-          onReady: ({ slug }) => { readySlug = slug; resolve(); },
-          onFailed: (message) => reject(new Error(message)),
-        });
-      });
+      const job = await submitIngest(url);
+      sessionStorage.setItem('p2e.job', job.id);
+      setImportProgress(job.label || '服务器已接收');
+      const done = await follow(job);
+      sessionStorage.removeItem('p2e.job');
       await onChanged();
-      onSelect(readySlug);
+      onSelect(done.episodeSlug);
       setUrlDraft('');
       onToast('素材已导入。');
     } catch (error) {
-      setImportFail((error as Error).message || '没有拿到音轨');
+      const failed = error as Error & { failure?: JobError; jobId?: string; continuable?: boolean };
+      setImportFail({
+        message: failed.message || '没有拿到音轨',
+        diagnosticId: failed.failure?.diagnosticId,
+        jobId: failed.jobId,
+        continuable: failed.continuable,
+      });
+    } finally {
+      setImporting(false); setImportProgress(null);
+    }
+  };
+
+  const resumeInterrupted = async () => {
+    if (!importFail?.jobId) return;
+    const held = importFail.jobId;
+    setImporting(true); setImportFail(null); setImportProgress('服务器已接收');
+    try {
+      const job = await continueJob(held);
+      const done = await follow(job);
+      await onChanged();
+      onSelect(done.episodeSlug);
+      onToast('素材已导入。');
+    } catch (error) {
+      const failed = error as Error & { failure?: JobError; jobId?: string; continuable?: boolean };
+      setImportFail({ message: failed.message, diagnosticId: failed.failure?.diagnosticId, jobId: failed.jobId || held, continuable: failed.continuable === true });
     } finally {
       setImporting(false); setImportProgress(null);
     }
@@ -153,19 +234,31 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
     else if (last?.kind === 'url') void takeUrl(last.url);
   };
 
-  const startTranscription = () => {
+  const beginTranscription = () => {
     if (!episode?.source) return;
-    setTranscribing(true); setPaused(false); setLogs([]);
-    transcribeStream(episode.slug, {
-      onLog: (line) => {
-        setLogs((old) => [...old, line].slice(-16));
-      },
-      onDone: async (code) => {
-        setTranscribing(false); setPaused(false);
+    setTranscribing(true); setPaused(false);
+    void (async () => {
+      try {
+        const job = episode.transcription?.state === 'interrupted' && episode.transcription.jobId
+          ? await continueJob(episode.transcription.jobId)
+          : await startTranscription(episode.slug);
+        await new Promise<void>((resolve, reject) => {
+          const stop = watchJob(job.id, (next) => {
+            if (!jobSettled(next)) return;
+            stop();
+            if (next.state === 'succeeded') resolve();
+            else reject(new Error(next.error?.userMessage || '转录没有完成'));
+          });
+        });
         await onChanged();
-        onToast(code === 0 ? '初稿已生成。' : null);
-      },
-    });
+        onToast('初稿已生成。');
+      } catch (error) {
+        await onChanged();
+        onToast((error as Error).message || '转录没有完成');
+      } finally {
+        setTranscribing(false); setPaused(false);
+      }
+    })();
   };
 
   const toggleTranscription = async () => {
@@ -195,9 +288,17 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
     if (!episode?.hasRaw) return;
     setCleaning(true); setCleanFail(null);
     try {
-      const result = await cleanEpisode(episode.slug);
+      const job = await cleanEpisode(episode.slug);
+      await new Promise<void>((resolve, reject) => {
+        const stop = watchJob(job.id, (next) => {
+          if (!jobSettled(next)) return;
+          stop();
+          if (next.state === 'succeeded') resolve();
+          else reject(new Error(next.error?.userMessage || '文章整理没有完成。'));
+        });
+      });
       await onChanged();
-      onToast(`文章已生成（${result.model}）。`);
+      onToast('文章已生成。');
     } catch (error) {
       const message = (error as Error).message || '文章整理没有完成。';
       setCleanFail(message);
@@ -243,19 +344,19 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
       </div>}
 
       {importing && <div className="notice working"><span className="spinner" /><div><b>{importProgress || '正在准备素材…'}</b><p>完成后自动加入资料库。</p></div></div>}
-      {importFail && <div className="notice error"><div><b>导入失败</b><p>{importFail}</p></div>{lastRef.current && <button type="button" className="text-button" onClick={retryImport}>重试</button>}</div>}
+      {importFail && <div className="notice error" role="alert"><div><b>{importFail.continuable ? '导入中断' : '导入失败'}</b><p>{importFail.message}</p>{importFail.diagnosticId && <small className="diagnostic">诊断号 {importFail.diagnosticId}</small>}</div>{importFail.continuable && importFail.jobId ? <button type="button" className="text-button" onClick={() => void resumeInterrupted()}>继续</button> : lastRef.current && <button type="button" className="text-button" onClick={retryImport}>重试</button>}</div>}
 
       {episode && <>
         <Journey active={activeStep} compact />
         <header className="session-header">
-          <div><p className="kicker">{serverState === 'failed' ? '转录失败' : episode.status === 'uploaded' ? '素材已就绪' : episode.status === 'transcribed' ? '初稿已生成' : '处理中'}</p><h1>{displayName(episode)}</h1></div>
-          <span className={`state-chip ${serverState === 'failed' ? 'failed' : isWorking ? 'active' : episode.status}`}>{isPaused ? '已暂停' : isWorking ? '转录中' : serverState === 'failed' ? '转录失败' : episode.status === 'uploaded' ? '待转录' : '待整理'}</span>
+          <div><p className="kicker">{serverState === 'interrupted' ? '转录中断' : serverState === 'failed' ? '转录失败' : episode.status === 'uploaded' ? '素材已就绪' : episode.status === 'transcribed' ? '初稿已生成' : '处理中'}</p><h1>{displayName(episode)}</h1></div>
+          <span className={`state-chip ${serverState === 'failed' || serverState === 'interrupted' ? 'failed' : isWorking ? 'active' : episode.status}`}>{isPaused ? '已暂停' : isWorking ? '转录中' : serverState === 'interrupted' ? '已中断' : serverState === 'failed' ? '转录失败' : episode.status === 'uploaded' ? '待转录' : '待整理'}</span>
         </header>
         <div className="source-strip"><span className="source-icon">♪</span><div><b>{sourceLabel(episode)}</b><small>{episode.chunkCount ? `${episode.chunkCount} 段` : '原始文件已保存'}{episode.duration ? ` · ${episode.duration}` : ''}</small></div><button type="button" className="text-button" onClick={() => fileRef.current?.click()}>更换</button></div>
 
         {unnamed && <form className="title-editor" onSubmit={(event) => { event.preventDefault(); void saveTitle(); }}><label htmlFor="episode-title">先命名，再开始转录。</label><input id="episode-title" value={titleDraft} onChange={(event) => setTitleDraft(event.target.value)} placeholder="节目名 · 主题" /><button className="button quiet" disabled={savingTitle || !titleDraft.trim()}>{savingTitle ? '保存中' : '保存'}</button></form>}
 
-        {episode.status === 'uploaded' && !isWorking && !episode.transcription && <div className="focus-card"><p className="card-eyebrow">下一步</p><h2>转成逐字初稿。</h2><p>按约 3 分钟分段识别，消耗转录额度；可随时暂停或稍后继续。</p><button type="button" className="button primary large" disabled={unnamed} onClick={startTranscription}>开始转录</button></div>}
+        {episode.status === 'uploaded' && !isWorking && !episode.transcription && <div className="focus-card"><p className="card-eyebrow">下一步</p><h2>转成逐字初稿。</h2><p>按约 3 分钟分段识别，消耗转录额度；可随时暂停或稍后继续。</p><button type="button" className="button primary large" disabled={unnamed} onClick={beginTranscription}>开始转录</button></div>}
 
         {episode.status === 'uploaded' && !isWorking && !episode.transcription && <div className="focus-card dim" aria-disabled="true"><p className="card-eyebrow">第 3 步</p><h2>整理成文章。</h2><p>初稿生成后点亮，初稿和分段稿保留备查。</p><button type="button" className="button primary large" disabled>整理成文章</button></div>}
 
@@ -263,7 +364,9 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
 
         {isWorking && <div className="focus-card dim" aria-disabled="true"><p className="card-eyebrow">第 3 步</p><h2>整理成文章。</h2><p>初稿生成后点亮。</p><button type="button" className="button primary large" disabled>整理成文章</button></div>}
 
-        {episode.status === 'uploaded' && !isWorking && episode.transcription?.state === 'failed' && <div className="focus-card blocked"><p className="card-eyebrow">转录失败</p><h2>{episode.transcription.error?.includes('额度') ? '转录额度已用尽。' : '转录未完成。'}</h2><p>{episode.transcription.error || '已完成的片段已保留，可稍后继续。'}</p><div className="recovery-note">{episode.completedChunks > 0 ? `已保存 ${episode.completedChunks} / ${episode.chunkCount} 段，继续时从断点接续。` : `尚未完成任何片段，共 ${episode.chunkCount || 1} 段。`}</div><div className="recovery-actions">{episode.transcription.error?.includes('额度') && <a className="button quiet link-button" href="https://platform.stepfun.com/" target="_blank" rel="noreferrer">查看额度</a>}<button type="button" className="button primary" disabled={unnamed} onClick={startTranscription}>{episode.completedChunks > 0 ? '继续' : '重试'}</button></div></div>}
+        {episode.status === 'uploaded' && !isWorking && episode.transcription?.state === 'interrupted' && <div className="focus-card blocked"><p className="card-eyebrow">转录中断</p><h2>任务因服务重启中断，已完成内容仍在，可以继续。</h2><p>已完成的片段会直接复用，不会重新请求转录。</p><button type="button" className="button primary" disabled={unnamed} onClick={beginTranscription}>继续</button></div>}
+
+        {episode.status === 'uploaded' && !isWorking && episode.transcription?.state === 'failed' && <div className="focus-card blocked"><p className="card-eyebrow">转录失败</p><h2>{episode.transcription.error?.includes('额度') ? '转录额度已用尽。' : '转录未完成。'}</h2><p>{episode.transcription.error || '已完成的片段已保留，可稍后继续。'}</p>{episode.transcription.diagnosticId && <small className="diagnostic">诊断号 {episode.transcription.diagnosticId}</small>}<div className="recovery-note">{episode.completedChunks > 0 ? `已保存 ${episode.completedChunks} / ${episode.chunkCount} 段，继续时从断点接续。` : `尚未完成任何片段，共 ${episode.chunkCount || 1} 段。`}</div><div className="recovery-actions">{episode.transcription.error?.includes('额度') && <a className="button quiet link-button" href="https://platform.stepfun.com/" target="_blank" rel="noreferrer">查看额度</a>}<button type="button" className="button primary" disabled={unnamed} onClick={beginTranscription}>{episode.completedChunks > 0 ? '继续' : '重试'}</button></div></div>}
 
         {episode.status === 'transcribed' && <div className="focus-card"><p className="card-eyebrow">初稿已生成</p><h2>整理成文章。</h2><p>{cleaning ? '正在整理，完成前不会覆盖已有文章。' : '初稿和分段稿保留备查；未通过结构检查的结果不会写入文章。'}</p><button type="button" className="button primary large" disabled={cleaning} onClick={clean}>{cleaning ? '整理中' : '整理成文章'}</button>{cleanFail && <div className="inline-error" role="alert"><b>未生成文章</b><span>{cleanFail}</span><small>初稿和已有文章未被覆盖。</small></div>}</div>}
 

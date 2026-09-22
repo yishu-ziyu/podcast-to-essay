@@ -10,6 +10,7 @@
     "server": "node server/index.mjs",
     "test": "node --test server/*.test.mjs && node --experimental-strip-types --test src/lib.test.ts",
     "build": "vite build",
+    "predeploy": "sh scripts/predeploy.sh",
     "electron": "electron .",
     "electron:dev": "IS_DEV=1 electron .",
     "electron:prod": "npm run build && IS_DEV=0 electron ."

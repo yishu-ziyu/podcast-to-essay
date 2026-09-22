@@ -12,8 +12,10 @@ export interface Episode {
   chunkCount: number;
   completedChunks: number;
   transcription: {
-    state: 'running' | 'paused' | 'failed';
+    state: 'running' | 'paused' | 'failed' | 'interrupted';
     error: string | null;
+    jobId?: string | null;
+    diagnosticId?: string | null;
   } | null;
   cleaned: boolean;
   cleanedAt: number | null;
@@ -52,17 +54,6 @@ export async function login(password: string): Promise<void> {
     body: JSON.stringify({ password }),
   });
   if (!r.ok) throw new Error('密码不对。');
-}
-
-export interface TranscribeHandlers {
-  onLog: (line: string) => void;
-  onDone: (code: number) => void;
-}
-
-export interface IngestHandlers {
-  onProgress: (message: string) => void;
-  onReady: (episode: { slug: string; title: string }) => void;
-  onFailed: (message: string) => void;
 }
 
 async function json<T>(r: Response): Promise<T> {
@@ -147,51 +138,87 @@ export async function uploadAudio(slug: string, file: File): Promise<void> {
   }
 }
 
-export function ingestUrlStream(url: string, h: IngestHandlers): void {
-  fetch(`${API}/ingests`, {
+export interface JobError {
+  code: string;
+  userMessage: string;
+  retryable: boolean;
+  stage: string;
+  diagnosticId: string;
+}
+
+export interface JobView {
+  id: string;
+  type: string;
+  episodeSlug: string;
+  state: 'queued' | 'running' | 'paused' | 'succeeded' | 'failed' | 'interrupted' | 'cancelled';
+  stage: string;
+  progress: number | null;
+  label: string;
+  error: JobError | null;
+  result: { provider?: string; model?: string } | null;
+}
+
+const TERMINAL = new Set(['succeeded', 'failed', 'interrupted', 'cancelled']);
+
+export async function submitIngest(url: string): Promise<JobView> {
+  const requestId = crypto.randomUUID();
+  const r = await fetch(`${API}/ingests`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ url }),
-  })
-    .then(async (r) => {
-      if (!r.ok) {
-        const e = await r.json().catch(() => ({}));
-        throw new Error((e as { error?: string }).error || `HTTP ${r.status}`);
-      }
-      if (!r.body) { h.onFailed('下载中断'); return; }
-      const reader = r.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-      let settled = false;
-      const pump = (): void => {
-        reader.read().then(({ done, value }) => {
-          if (done) {
-            if (!settled) h.onFailed('导入未完成，请重试。');
-            return;
-          }
-          buf += decoder.decode(value, { stream: true });
-          let idx: number;
-          while ((idx = buf.indexOf('\n\n')) >= 0) {
-            const chunk = buf.slice(0, idx);
-            buf = buf.slice(idx + 2);
-            let event = 'progress';
-            const dataLines: string[] = [];
-            for (const line of chunk.split('\n')) {
-              if (line.startsWith('event:')) event = line.slice(6).trim();
-              else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
-            }
-            const text = dataLines.join('\n');
-            const data = JSON.parse(text) as { message?: string; slug?: string; title?: string };
-            if (event === 'ready' && data.slug && data.title) { settled = true; h.onReady({ slug: data.slug, title: data.title }); }
-            else if (event === 'failed') { settled = true; h.onFailed(data.message || '未获取到可转录的音频'); }
-            else if (event === 'progress') h.onProgress(data.message || '正在准备音轨…');
-          }
-          pump();
-        });
-      };
-      pump();
-    })
-    .catch(() => { h.onFailed('无法连接下载服务，请重试。'); });
+    body: JSON.stringify({ url, requestId }),
+  });
+  return readJob(r);
+}
+
+export async function getJob(id: string): Promise<JobView> {
+  const r = await fetch(`${API}/jobs/${encodeURIComponent(id)}`);
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((body as { error?: string }).error || '任务状态读取失败');
+  return (body as { job: JobView }).job;
+}
+
+export async function listJobs(): Promise<JobView[]> {
+  const r = await fetch(`${API}/jobs`);
+  const body = await r.json().catch(() => ({ jobs: [] }));
+  if (!r.ok) return [];
+  return (body as { jobs: JobView[] }).jobs || [];
+}
+
+export async function continueJob(id: string): Promise<JobView> {
+  const r = await fetch(`${API}/jobs/${encodeURIComponent(id)}/continue`, { method: 'POST' });
+  return readJob(r);
+}
+
+export function watchJob(id: string, onJob: (job: JobView) => void): () => void {
+  let stop = false;
+  const source = new EventSource(`${API}/jobs/${encodeURIComponent(id)}/events`);
+  source.onmessage = (event) => {
+    try { onJob(JSON.parse(event.data) as JobView); } catch { /* ignore a partial frame */ }
+  };
+  source.onerror = () => { source.close(); };
+  const timer = window.setInterval(() => {
+    if (stop) return;
+    void getJob(id).then(onJob).catch(() => {});
+  }, 1500);
+  return () => {
+    stop = true;
+    window.clearInterval(timer);
+    source.close();
+  };
+}
+
+async function readJob(r: Response): Promise<JobView> {
+  const body = await r.json().catch(() => ({})) as { error?: string; failure?: JobError; job?: JobView };
+  if (!r.ok || !body.job) {
+    const err = new Error(body.failure?.userMessage || body.error || `HTTP ${r.status}`);
+    (err as Error & { failure?: JobError }).failure = body.failure;
+    throw err;
+  }
+  return body.job;
+}
+
+export function jobSettled(job: JobView) {
+  return TERMINAL.has(job.state);
 }
 
 export async function getTranscript(slug: string, type: 'raw' | 'srt' | 'cleaned'): Promise<string> {
@@ -200,9 +227,13 @@ export async function getTranscript(slug: string, type: 'raw' | 'srt' | 'cleaned
   return r.text();
 }
 
-export async function cleanEpisode(slug: string): Promise<{ method: string; provider: string; model: string }> {
-  const r = await fetch(`${API}/episodes/${encodeURIComponent(slug)}/clean`, { method: 'POST' });
-  return json<{ ok: boolean; method: string; provider: string; model: string }>(r);
+export async function cleanEpisode(slug: string): Promise<JobView> {
+  const r = await fetch(`${API}/episodes/${encodeURIComponent(slug)}/clean`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ requestId: crypto.randomUUID() }),
+  });
+  return readJob(r);
 }
 
 export async function controlTranscription(slug: string, action: 'pause' | 'resume'): Promise<{ paused: boolean }> {
@@ -212,40 +243,11 @@ export async function controlTranscription(slug: string, action: 'pause' | 'resu
   ));
 }
 
-// POST with SSE log streaming (fetch + ReadableStream reader).
-export function transcribeStream(slug: string, h: TranscribeHandlers): void {
-  fetch(`${API}/episodes/${encodeURIComponent(slug)}/transcribe`, { method: 'POST' })
-    .then(async (r) => {
-      if (!r.ok) {
-        const e = await r.json().catch(() => ({}));
-        throw new Error((e as { error?: string }).error || '转录未启动');
-      }
-      if (!r.body) { h.onDone(1); return; }
-      const reader = r.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-      const pump = (): void => {
-        reader.read().then(({ done, value }) => {
-          if (done) return;
-          buf += decoder.decode(value, { stream: true });
-          let idx: number;
-          while ((idx = buf.indexOf('\n\n')) >= 0) {
-            const chunk = buf.slice(0, idx);
-            buf = buf.slice(idx + 2);
-            let event = 'log';
-            const dataLines: string[] = [];
-            for (const line of chunk.split('\n')) {
-              if (line.startsWith('event:')) event = line.slice(6).trim();
-              else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
-            }
-            const text = dataLines.join('\n');
-            if (event === 'done') h.onDone(Number(text) || 0);
-            else h.onLog(text);
-          }
-          pump();
-        });
-      };
-      pump();
-    })
-    .catch((e) => { h.onLog(e.message); h.onDone(1); });
+export async function startTranscription(slug: string): Promise<JobView> {
+  const r = await fetch(`${API}/episodes/${encodeURIComponent(slug)}/transcribe`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ requestId: crypto.randomUUID() }),
+  });
+  return readJob(r);
 }

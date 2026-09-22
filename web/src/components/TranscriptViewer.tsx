@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, ReactNode } from 'react';
-import { Episode, getTranscript, cleanEpisode } from '../api';
+import { Episode, JobView, cleanEpisode, getTranscript, jobSettled, watchJob } from '../api';
 import { displayName, articleUnits, parseSrt, SrtCue } from '../lib';
 
 type Tab = 'cleaned' | 'raw' | 'srt';
@@ -65,10 +65,18 @@ export default function TranscriptViewer({ episode, onCleaned, onToast }: Props)
     if (!episode.hasRaw) return;
     setCleaning(true); setCleanError(null);
     try {
-      const result = await cleanEpisode(episode.slug);
+      const job = await cleanEpisode(episode.slug);
+      await new Promise<void>((resolve, reject) => {
+        const stop = watchJob(job.id, (next: JobView) => {
+          if (!jobSettled(next)) return;
+          stop();
+          if (next.state === 'succeeded') resolve();
+          else reject(new Error(next.error?.userMessage || '文章整理没有完成。'));
+        });
+      });
       await onCleaned();
       await load('cleaned');
-      onToast(`文章已重新生成（${result.model}）。`);
+      onToast('文章已重新生成。');
     } catch (error) {
       setCleanError((error as Error).message || '文章整理没有完成。');
       onToast('重新整理失败，原文章未被覆盖。');

@@ -22,6 +22,7 @@ raw/**/transcription-state.json
 web/node_modules/
 web/dist/
 web/out/
+web/ytdlp-assets/
 
 # secrets
 .env
