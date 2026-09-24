@@ -82,11 +82,8 @@ async function followRedirects(href) {
     if (!location) throwFailure(makeError({ code: 'platform_refused', platform: 'douyin', stage: 'checking_url' }));
     const next = new URL(location, current);
     const checked = classifyMediaUrl(next.href);
-    // An expired or truncated share link redirects to a non-video page (usually the Douyin home page);
-    // "this is a profile page" would mislead someone who pasted a video share.
-    if (!checked.supported && checked.kind !== 'douyin_short_link') {
-      throwFailure({ ...failureForClassification(checked), userMessage: DEAD_SHARE_LINK });
-    }
+    // Stop at an unsupported landing without fetching it; resolveSource reports it as a dead share link.
+    if (!checked.supported && checked.kind !== 'douyin_short_link') return next.href;
     current = checked.normalizedUrl || next.href;
   }
   throwFailure(makeError({ code: 'timeout', platform: 'douyin', stage: 'checking_url', userMessage: '短链重定向过多。请改用视频页面链接。' }));
@@ -208,6 +205,8 @@ export async function resolveSource(rawUrl) {
   if (classified.kind === 'douyin_short_link') {
     const landed = await followRedirects(classified.normalizedUrl);
     classified = classifyMediaUrl(landed);
+    // An expired or truncated share link lands on a non-video page (usually the Douyin home page);
+    // "this is a profile page" would mislead someone who pasted a video share.
     if (classified.kind !== 'douyin_video') {
       throwFailure(failureForClassification({
         ...classified,

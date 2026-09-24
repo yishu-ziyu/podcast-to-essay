@@ -43,31 +43,24 @@ function runTranscribe(dir, port) {
   });
 }
 
-test('网络断两次后第三次成功，转录照常完成', async () => {
-  const asr = await fakeAsr(2);
+async function transcribeAgainst(failFirst, t) {
+  const asr = await fakeAsr(failFirst);
   const dir = await episodeDir();
-  try {
-    const { code, out } = await runTranscribe(dir, asr.server.address().port);
-    assert.equal(code, 0, out);
-    assert.equal(asr.calls(), 3);
-    assert.match(await fsp.readFile(path.join(dir, 'asr_raw.txt'), 'utf8'), /模拟识别结果/);
-  } finally {
-    asr.server.close();
-    await fsp.rm(dir, { recursive: true, force: true });
-  }
+  t.after(async () => { asr.server.close(); await fsp.rm(dir, { recursive: true, force: true }); });
+  return { dir, calls: asr.calls, ...(await runTranscribe(dir, asr.server.address().port)) };
+}
+
+test('网络断两次后第三次成功，转录照常完成', async (t) => {
+  const { dir, calls, code, out } = await transcribeAgainst(2, t);
+  assert.equal(code, 0, out);
+  assert.equal(calls(), 3);
+  assert.match(await fsp.readFile(path.join(dir, 'asr_raw.txt'), 'utf8'), /模拟识别结果/);
 });
 
-test('一直连不上时给出人话提示，不暴露 fetch failed', async () => {
-  const asr = await fakeAsr(99);
-  const dir = await episodeDir();
-  try {
-    const { code, out } = await runTranscribe(dir, asr.server.address().port);
-    assert.equal(code, 1);
-    assert.equal(asr.calls(), 3, '重试两次后停止');
-    assert.match(out, /连不上转录服务/);
-    assert.doesNotMatch(out.split('\n').find((line) => line.startsWith('@@error')) || '', /fetch failed/);
-  } finally {
-    asr.server.close();
-    await fsp.rm(dir, { recursive: true, force: true });
-  }
+test('一直连不上时给出人话提示，不暴露 fetch failed', async (t) => {
+  const { calls, code, out } = await transcribeAgainst(99, t);
+  assert.equal(code, 1);
+  assert.equal(calls(), 3, '重试两次后停止');
+  assert.match(out, /连不上转录服务/);
+  assert.doesNotMatch(out.split('\n').find((line) => line.startsWith('@@error')) || '', /fetch failed/);
 });

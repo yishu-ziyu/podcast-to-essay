@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DOUYIN_PAGE_MESSAGE, classifyMediaUrl } from './domain/media-url.mjs';
-import { failureForClassification, interpretExtractor, messageFor } from './domain/errors.mjs';
+import { failureForClassification, failureFromUnknown, interpretExtractor, messageFor } from './domain/errors.mjs';
 import { redact } from './infrastructure/logger.mjs';
 
 const PAGE = '这是抖音主页，不是具体视频。请打开要导入的视频，复制该视频的分享链接。';
@@ -49,4 +49,12 @@ test('logs redact tokens, passwords, and session cookies', () => {
   const text = redact('key=step-secret-value Authorization: Bearer anthropic-secret cookie=gate-secret p2e_session=abc.def', env);
   assert.doesNotMatch(text, /step-secret-value|anthropic-secret|gate-secret|abc\.def/);
   assert.match(text, /\[redacted\]/);
+});
+
+test('网络不通时给人话提示：整理文章的调用方把原始报错标成 internal_error 也一样', () => {
+  const raw = Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } });
+  const failure = failureFromUnknown(Object.assign(raw, { code: 'internal_error', userMessage: raw.message }), { stage: 'writing_article' });
+  assert.match(failure.userMessage, /网络连不上/);
+  assert.doesNotMatch(failure.userMessage, /fetch failed/);
+  assert.equal(failure.retryable, true);
 });

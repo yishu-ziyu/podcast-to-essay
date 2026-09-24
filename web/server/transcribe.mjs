@@ -3,6 +3,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { isNetworkError } from './domain/errors.mjs';
 
 const dir = process.argv[2];
 const key = process.env.STEP_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN;
@@ -53,7 +54,7 @@ async function transcribeChunk(file) {
   if (!res.ok) {
     if (res.status === 402) throw coded('transcription_quota_exhausted', '转录服务额度已用尽。补充额度后可以从这一段继续。');
     if (res.status === 401 || res.status === 403) throw coded('transcription_auth_failed', '转录服务授权失效，请检查设置后重试。');
-    throw Object.assign(coded('internal_error', '转录服务暂时没有响应，请稍后重试。'), { transient: true });
+    throw coded('internal_error', '转录服务暂时没有响应，请稍后重试。', { transient: true });
   }
   const events = (await res.text())
     .split('\n')
@@ -64,7 +65,7 @@ async function transcribeChunk(file) {
   for (const event of events) {
     let data;
     try { data = JSON.parse(event); } catch { continue; }
-    if (data.type === 'error') throw Object.assign(coded('internal_error', '转录服务返回错误。'), { transient: true });
+    if (data.type === 'error') throw coded('internal_error', '转录服务返回错误。', { transient: true });
     if (data.type === 'transcript.text.delta') text += String(data.delta || '');
     if (data.type === 'transcript.text.done') text = String(data.text || text);
   }
@@ -81,11 +82,9 @@ async function transcribeChunkWithRetry(file, label) {
     try {
       return await transcribeChunk(file);
     } catch (err) {
-      const transient = !err.code || err.transient;
-      if (!transient) throw err;
-      if (attempt >= RETRY_WAITS_MS.length) {
-        if (err.userMessage) throw err;
-        throw coded('internal_error', '连不上转录服务。已完成的片段已保存，稍后点「继续」即可。');
+      if (!isNetworkError(err) && !err.transient) throw err;
+      if (attempt === RETRY_WAITS_MS.length) {
+        throw err.userMessage ? err : coded('internal_error', '连不上转录服务。已完成的片段已保存，稍后点「继续」即可。');
       }
       console.log(`${label}没有成功，${RETRY_WAITS_MS[attempt] / 1000} 秒后重试…`);
       await new Promise((resolve) => setTimeout(resolve, RETRY_WAITS_MS[attempt]));
@@ -93,10 +92,11 @@ async function transcribeChunkWithRetry(file, label) {
   }
 }
 
-function coded(code, userMessage) {
+function coded(code, userMessage, { transient = false } = {}) {
   const err = new Error(userMessage);
   err.code = code;
   err.userMessage = userMessage;
+  err.transient = transient;
   return err;
 }
 

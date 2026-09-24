@@ -24,6 +24,15 @@ const RETRYABLE = new Set([
   'internal_error',
 ]);
 
+// Node's fetch reports an unreachable service as TypeError('fetch failed') with the socket error in `cause`.
+const NETWORK_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT']);
+
+export function isNetworkError(err) {
+  return (err?.name === 'TypeError' && err?.message === 'fetch failed')
+    || NETWORK_CODES.has(err?.cause?.code)
+    || NETWORK_CODES.has(err?.code);
+}
+
 export function platformLabel(platform) {
   if (platform === 'bilibili') return 'B 站';
   if (platform === 'douyin') return '抖音';
@@ -124,6 +133,10 @@ export function failureFromUnknown(err, { platform = 'unknown', stage = 'interna
     return makeError({ code: 'disk_full', stage, platform });
   }
   if (err?.code === 'file_too_large') return makeError({ code: 'file_too_large', stage, platform });
+  // Before the ERROR_CODES branch: callers tag unknown errors as internal_error with the raw message.
+  if (isNetworkError(err)) {
+    return makeError({ code: 'internal_error', userMessage: '网络连不上外部服务。已完成的部分已保存，稍后重试即可。', stage, platform });
+  }
   if (ERROR_CODES.includes(err?.code)) {
     return makeError({ code: err.code, userMessage: err.userMessage, stage, platform });
   }

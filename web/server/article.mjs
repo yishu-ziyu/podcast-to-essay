@@ -66,7 +66,7 @@ export function articleStructure(text) {
 
 export function validateArticle(content, rawLength = 0) {
   const text = normalizeArticle(content);
-  const { headings, paragraphs } = articleStructure(text);
+  const { headings, paragraphs, lineCounts } = articleStructure(text);
   const minChars = minimumArticleLength(rawLength);
 
   if (/\[\d{2}:\d{2}:\d{2}(?:,\d{3})?\]/.test(text)) throw new Error('文章仍含时间戳，未写入结果。');
@@ -75,7 +75,7 @@ export function validateArticle(content, rawLength = 0) {
   if (rawLength > 20_000 && headings.length < 3) throw new Error(`文章缺少必要的章节结构（检测到 ${headings.length} 节），未写入结果。`);
   if (rawLength > 20_000 && paragraphs.length < 8) throw new Error(`文章段落结构不足（检测到 ${paragraphs.length} 段），未写入结果。`);
 
-  return { text, stats: { chars: text.length, paragraphs: paragraphs.length, headings: headings.length } };
+  return { text, lineCounts, stats: { chars: text.length, paragraphs: paragraphs.length, headings: headings.length } };
 }
 
 // 短音频的逐字稿可能不到 500 字，固定下限会让忠实整理必然或随机失败。
@@ -119,7 +119,7 @@ export async function generateArticle({ title, rawText, env = process.env, fetch
   const choice = data.choices?.[0];
   if (choice?.finish_reason === 'length') throw new Error('文章生成达到长度上限，未写入不完整结果。');
   const { text: withMap, map } = extractMap(choice?.message?.content);
-  const { text, stats } = validateArticle(withMap, rawText.length);
+  const { text, stats, lineCounts } = validateArticle(withMap, rawText.length);
   return {
     text,
     meta: {
@@ -127,7 +127,7 @@ export async function generateArticle({ title, rawText, env = process.env, fetch
       model: data.model || config.model,
       generatedAt: new Date().toISOString(),
       stats,
-      paraMap: validateMap(map, stats.paragraphs) || validateMap(foldLineMap(map, articleStructure(text).lineCounts), stats.paragraphs),
+      paraMap: validateMap(map, stats.paragraphs) || validateMap(foldLineMap(map, lineCounts), stats.paragraphs),
     },
   };
 }
