@@ -30,19 +30,31 @@
   - 验证：从云主机走公网 `GET https://lcw.yishuziyu.cn/` → 200，标题「录成文」；`/assets/*` 200；`/api/health` 200；6MB POST 未被 Vercel 网关拦截。
 - 更正 2026-09-05 的误判：当时 `lcw` 解析到 `198.18.0.51` 是本地代理造成的假象，云主机从未过期。
 
+## 2.1 2026-09-25 部署（`cd9c8eb`）
+
+- 内容：首页改为输入卡 + 最近文章、资料库改为顶栏浮层、产品名改为「誊清」、核对与更换音轨等修复。
+- 服务目录：`/opt/podcast-to-essay`（compose 在 `web/`）。部署前该目录停在 `93e0ebe`，`0fa5020` 是手工拷文件上去的，
+  工作区与 `0fa5020` 逐文件比对一致后才 `git reset --hard origin/main`；原目录备份在
+  `/root/backups/podcast-to-essay-src-20260925-015450.tar.gz`。
+- `web/ytdlp-assets/yt-dlp_linux` 不入库（`.gitignore`），但 Dockerfile 需要它；reset 不会删除它，不要 `git clean -x`。
+- 前台跑 `docker compose build` 时 SSH 会断开且构建不会开始，改为 `nohup` 后台执行，日志写到 `/root/backups/deploy-*.log`。
+- 验证：公网标题「誊清」，`/assets/*` 200，`/api/health` 200；游客模式横幅 36px、内容区占满（首次部署时横幅被拉高，`cd9c8eb` 修复后重部署）。
+- 部署前确认 `/data/jobs` 里没有 queued / running / paused 任务，重启不会打断转录。
+
 ## 3. 重新部署步骤
 
 ```bash
 # 1. 先确认能连上
 ssh root@121.89.90.68 'echo OK'
 
-# 2. 到服务目录（以实际路径为准），拉代码
+# 2. 到服务目录，拉代码（工作区应干净；不干净先比对再处理，见 §2.1）
+cd /opt/podcast-to-essay
 git pull origin main
 
 # 3. 重建并重启（data 卷保留期次数据；内存中的转录任务会中断，可断点续转）
+#    后台执行，避免 SSH 断开打断构建
 cd web
-docker compose build
-docker compose up -d
+nohup sh -c "docker compose build && docker compose up -d && echo DEPLOY_DONE" > /root/backups/deploy-$(date +%Y%m%d-%H%M).log 2>&1 &
 
 # 4. 验证（注意带正确 Host，裸 IP 可能被阿里云入口拦截）
 curl -H "Host: lcw.yishuziyu.cn" http://127.0.0.1:8787/api/health
