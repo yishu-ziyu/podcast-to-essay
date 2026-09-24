@@ -92,6 +92,22 @@ export default function App() {
 
   const current = episodes.find((episode) => episode.slug === selected) || null;
   const reading = Boolean(current?.cleaned);
+  const libraryToggle = useRef<HTMLButtonElement>(null);
+  const libraryClose = useRef<HTMLButtonElement>(null);
+  const closeLibrary = useCallback(() => {
+    setLibraryOpen(false);
+    libraryToggle.current?.focus();
+  }, []);
+
+  // The drawer stays mounted so it can slide out; move focus in and let Esc close it.
+  useEffect(() => {
+    if (!libraryOpen) return;
+    libraryClose.current?.focus();
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') closeLibrary(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [libraryOpen, closeLibrary]);
+
   const startNew = () => {
     setSelected(null);
     setLibraryOpen(false);
@@ -101,32 +117,23 @@ export default function App() {
   const guest = !session.owner ? session.guest : null;
 
   return (
-    <div className={`app-shell${libraryOpen ? ' library-open' : ''}`}>
-      <aside className="library" aria-label="资料库">
-        <button
-          type="button"
-          className="library-toggle"
-          aria-label={libraryOpen ? '收起资料库' : '打开资料库'}
-          aria-expanded={libraryOpen}
-          onClick={() => setLibraryOpen((open) => !open)}
-        >
-          <span className="hamburger" aria-hidden="true"><i /><i /></span>
-          {libraryOpen && <span>资料库</span>}
-        </button>
-        {libraryOpen && (
-          <EpisodeList
-            episodes={episodes}
-            selected={selected}
-            loading={loading}
-            onSelect={(slug) => { setSelected(slug); setLibraryOpen(false); }}
-            onDelete={session.owner ? handleDelete : undefined}
-          />
-        )}
-      </aside>
-
+    <div className="app-shell">
       <main className="app-main">
         <header className="app-header">
-          <button type="button" className="wordmark" onClick={startNew}>录成文</button>
+          <div className="header-start">
+            <button
+              ref={libraryToggle}
+              type="button"
+              className="library-toggle"
+              aria-label="打开资料库"
+              aria-expanded={libraryOpen}
+              aria-controls="library"
+              onClick={() => setLibraryOpen(true)}
+            >
+              <span className="hamburger" aria-hidden="true"><i /><i /></span>
+            </button>
+            <button type="button" className="wordmark" onClick={startNew}>录成文</button>
+          </div>
           <span className="header-context">{reading ? '文章' : current ? '条目' : ''}</span>
           {!session.owner
             ? <button type="button" className="new-button" onClick={() => setLoginOpen(true)}>所有者登录</button>
@@ -152,6 +159,21 @@ export default function App() {
           )}
         </div>
       </main>
+
+      <div className={`drawer-backdrop${libraryOpen ? ' open' : ''}`} onClick={closeLibrary} aria-hidden="true" />
+      <aside id="library" className={`library${libraryOpen ? ' open' : ''}`} aria-label="资料库" role="dialog" aria-modal="true">
+        <div className="library-head">
+          <span>资料库<b>{episodes.length}</b></span>
+          <button ref={libraryClose} type="button" className="library-close" aria-label="关闭资料库" onClick={closeLibrary}>✕</button>
+        </div>
+        <EpisodeList
+          episodes={episodes}
+          selected={selected}
+          loading={loading}
+          onSelect={(slug) => { setSelected(slug); closeLibrary(); }}
+          onDelete={session.owner ? handleDelete : undefined}
+        />
+      </aside>
 
       {loginOpen && <OwnerLogin onClose={() => setLoginOpen(false)} onLoggedIn={async () => { setLoginOpen(false); setSession(await getSession()); await refresh(); }} />}
       {toast && <button type="button" className={`toast${toastLeaving ? ' leaving' : ''}`} onClick={dismissToast}>{toast}</button>}

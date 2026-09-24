@@ -19,7 +19,6 @@ export function statusFor(episode: Episode) {
 export default function EpisodeList({ episodes, selected, loading, onSelect, onDelete }: Props) {
   return (
     <div className="episode-list">
-      <div className="library-summary"><span>全部条目</span><b>{episodes.length}</b></div>
       {loading && !episodes.length && <p className="library-empty">加载中…</p>}
       {!loading && !episodes.length && <p className="library-empty">暂无条目。</p>}
       <ul>

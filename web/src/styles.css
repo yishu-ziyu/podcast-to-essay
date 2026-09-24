@@ -26,24 +26,34 @@ body { background: var(--canvas); color: var(--ink); font-family: var(--sans); }
 button, input { font: inherit; }
 button { -webkit-tap-highlight-color: transparent; }
 
-.app-shell { display: grid; grid-template-columns: 58px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: 100%; transition: grid-template-columns .22s var(--ease); }
-.app-shell.library-open { grid-template-columns: 284px minmax(0, 1fr); }
-.library { min-width: 0; overflow: hidden; background: #eeece8; border-right: 1px solid var(--line); }
-.library-toggle { display: flex; align-items: center; gap: 12px; width: 100%; height: 64px; padding: 0 20px; border: 0; background: transparent; color: var(--ink); cursor: pointer; font: 500 14px var(--sans); white-space: nowrap; }
-.app-shell:not(.library-open) .library-toggle { justify-content: center; padding: 0; }
+.app-shell { height: 100%; }
+.app-main { display: flex; flex-direction: column; height: 100%; min-width: 0; }
+.app-header, .guest-banner { flex: none; }
+.header-start { display: flex; align-items: center; gap: 4px; justify-self: start; margin-left: -12px; }
+.library-toggle { display: grid; width: 44px; height: 44px; place-items: center; border: 0; border-radius: 10px; background: transparent; color: var(--ink); cursor: pointer; }
+.library-toggle:hover { background: var(--surface); }
 .hamburger { display: grid; gap: 5px; width: 18px; }
 .hamburger i { display: block; height: 1px; background: var(--ink); }
 .hamburger i:last-child { width: 11px; }
 .library-toggle:hover .hamburger i { background: var(--accent); }
 
+.drawer-backdrop { position: fixed; inset: 0; z-index: 20; background: rgba(34, 32, 30, .18); opacity: 0; visibility: hidden; transition: opacity .2s var(--ease), visibility 0s linear .2s; }
+.drawer-backdrop.open { opacity: 1; visibility: visible; transition: opacity .2s var(--ease); }
+.library { position: fixed; top: 0; bottom: 0; left: 0; z-index: 21; display: flex; flex-direction: column; width: min(320px, 86vw); border-right: 1px solid var(--line); background: #eeece8; box-shadow: 12px 0 40px rgba(38, 31, 24, .1); transform: translateX(-100%); visibility: hidden; transition: transform .24s var(--ease), visibility 0s linear .24s; }
+.library.open { transform: none; visibility: visible; transition: transform .24s var(--ease); }
+.library-head { display: flex; flex: none; align-items: center; justify-content: space-between; height: 64px; padding: 0 12px 0 20px; }
+.library-head span { font-size: 14px; font-weight: 600; }
+.library-head b { margin-left: 8px; color: var(--muted); font-weight: 500; }
+.library-close { display: grid; width: 44px; height: 44px; place-items: center; border: 0; border-radius: 10px; background: transparent; color: var(--muted); cursor: pointer; font-size: 15px; }
+.library-close:hover { background: var(--surface); color: var(--ink); }
 .app-main { min-width: 0; display: grid; grid-template-rows: 64px minmax(0, 1fr); }
-.app-header { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 0 28px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--canvas) 90%, white); }
+.app-header { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; height: 64px; padding: 0 28px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--canvas) 90%, white); }
 .wordmark { justify-self: start; padding: 0; border: 0; background: transparent; color: var(--ink); cursor: pointer; font: 500 19px var(--serif); letter-spacing: -.06em; }
 .header-context { color: var(--muted); font: 11px var(--mono); letter-spacing: .06em; }
 .new-button { justify-self: end; padding: 8px 11px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); cursor: pointer; font-size: 12px; }
 .new-button:hover { background: var(--surface); }
 .wordmark, .new-button, .text-button, .reader-tabs button { min-height: 44px; }
-.stage { min-width: 0; overflow: auto; padding: 52px 30px 68px; }
+.stage { flex: 1; min-height: 0; min-width: 0; overflow: auto; padding: 52px 30px 68px; }
 
 .workbench { width: min(960px, 100%); margin: 0 auto; }
 .kicker, .card-eyebrow { margin: 0 0 10px; color: var(--muted); font: 11px var(--mono); letter-spacing: .07em; }
@@ -179,9 +189,7 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
 .process-details summary { cursor: pointer; }
 .process-details pre { max-height: 200px; overflow: auto; margin: 10px 0 0; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-soft); font: 10px/1.55 var(--mono); white-space: pre-wrap; }
 
-.episode-list { height: calc(100% - 64px); overflow: auto; padding: 4px 12px 20px; }
-.library-summary { display: flex; justify-content: space-between; padding: 8px 8px 14px; color: var(--muted); font-size: 11px; }
-.library-summary b { color: var(--ink); font-weight: 500; }
+.episode-list { flex: 1; min-height: 0; overflow: auto; padding: 0 12px 20px; }
 .library-empty { padding: 8px; color: var(--muted); font-size: 12px; }
 .episode-list ul { margin: 0; padding: 0; list-style: none; }
 .episode-list li { position: relative; margin: 2px 0; border-radius: 10px; }
@@ -242,12 +250,7 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
 .focus-card.dim .button.primary:disabled { background: #e7e2da; color: var(--muted); opacity: 1; filter: none; }
 
 @media (max-width: 720px) {
-  .app-shell, .app-shell.library-open { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
-  .library { max-height: 54px; border-right: 0; border-bottom: 1px solid var(--line); }
-  .app-shell.library-open .library { max-height: 40vh; }
-  .library-toggle, .app-shell:not(.library-open) .library-toggle { justify-content: flex-start; height: 54px; padding: 0 20px; }
-  .app-main { grid-row: 2; grid-template-rows: 56px minmax(0, 1fr); }
-  .app-header { padding: 0 18px; }
+  .app-header { height: 56px; padding: 0 18px; }
   .stage { padding: 28px 18px 50px; }
   .home { padding-top: 8px; }
   .home-title { margin-bottom: 22px; font-size: clamp(30px, 9vw, 38px); }
