@@ -51,6 +51,11 @@ ssh root@121.89.90.68 'echo OK'
 cd /opt/podcast-to-essay
 git pull origin main
 
+#    云主机连 GitHub 经常超时。拉不下来时在本机打包缺的提交再传上去（提交与 origin/main 完全一致）：
+#    本机： git bundle create /tmp/p2e.bundle <服务器当前提交>..main
+#          scp /tmp/p2e.bundle root@121.89.90.68:/root/backups/p2e.bundle
+#    云主机：git pull --ff-only /root/backups/p2e.bundle main
+
 # 3. 重建并重启（data 卷保留期次数据；内存中的转录任务会中断，可断点续转）
 #    后台执行，避免 SSH 断开打断构建
 cd web
