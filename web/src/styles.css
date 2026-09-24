@@ -46,7 +46,6 @@ button { -webkit-tap-highlight-color: transparent; }
 .library-head b { margin-left: 8px; color: var(--muted); font-weight: 500; }
 .library-close { display: grid; width: 44px; height: 44px; place-items: center; border: 0; border-radius: 10px; background: transparent; color: var(--muted); cursor: pointer; font-size: 15px; }
 .library-close:hover { background: var(--surface); color: var(--ink); }
-.app-main { min-width: 0; display: grid; grid-template-rows: 64px minmax(0, 1fr); }
 .app-header { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; height: 64px; padding: 0 28px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--canvas) 90%, white); }
 .wordmark { justify-self: start; padding: 0; border: 0; background: transparent; color: var(--ink); cursor: pointer; font: 500 19px var(--serif); letter-spacing: -.06em; }
 .header-context { color: var(--muted); font: 11px var(--mono); letter-spacing: .06em; }
