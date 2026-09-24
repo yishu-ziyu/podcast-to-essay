@@ -27,6 +27,7 @@ export interface Episode {
     paraMap?: ([number, number] | null)[] | null;
   } | null;
   status: EpisodeStatus;
+  asr?: { model: string } | null;
 }
 
 // Relative so the app also works behind a reverse-proxy path prefix (e.g. /lcw/).
@@ -79,7 +80,7 @@ export async function createEpisode(slug: string): Promise<void> {
 }
 
 export async function deleteEpisode(slug: string): Promise<void> {
-  await fetch(`${API}/episodes/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+  await json(await fetch(`${API}/episodes/${encodeURIComponent(slug)}`, { method: 'DELETE' }));
 }
 
 export async function updateEpisodeTitle(slug: string, title: string): Promise<void> {

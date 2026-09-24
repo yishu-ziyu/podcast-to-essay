@@ -3,11 +3,18 @@ import { Episode, listEpisodes, deleteEpisode, getSession, login, Session } from
 import EpisodeList from './components/EpisodeList';
 import Workbench from './components/Workbench';
 import TranscriptViewer from './components/TranscriptViewer';
+import ConfirmDialog from './components/ConfirmDialog';
+import { displayName } from './lib';
 
 function OwnerLogin({ onClose, onLoggedIn }: { onClose: () => void; onLoggedIn: () => void }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true); setError(null);
@@ -18,7 +25,10 @@ function OwnerLogin({ onClose, onLoggedIn }: { onClose: () => void; onLoggedIn: 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <form className="gate" onClick={(event) => event.stopPropagation()} onSubmit={(event) => { void submit(event); }}>
-        <label htmlFor="gate-password">所有者密码</label>
+        <div className="gate-head">
+          <label htmlFor="gate-password">所有者密码</label>
+          <button type="button" className="gate-close" aria-label="关闭" onClick={onClose}>✕</button>
+        </div>
         <input id="gate-password" type="password" autoFocus value={password} onChange={(event) => { setPassword(event.target.value); setError(null); }} />
         <button className="button primary" disabled={busy || !password}>{busy ? '验证中' : '登录'}</button>
         {error && <p className="field-hint error-text">{error}</p>}
@@ -78,8 +88,12 @@ export default function App() {
 
   useEffect(() => { if (session) void refresh(); }, [refresh, session]);
 
-  const handleDelete = async (slug: string) => {
-    if (!confirm('删除该条目、音轨和已生成的文章？此操作不可撤销。')) return;
+  const [pendingDelete, setPendingDelete] = useState<Episode | null>(null);
+  const handleDelete = (slug: string) => setPendingDelete(episodes.find((episode) => episode.slug === slug) || null);
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    const { slug } = pendingDelete;
+    setPendingDelete(null);
     try {
       await deleteEpisode(slug);
       showToast('已删除。');
@@ -175,6 +189,14 @@ export default function App() {
         />
       </aside>
 
+      {pendingDelete && <ConfirmDialog
+        title={`删除「${displayName(pendingDelete).length > 28 ? displayName(pendingDelete).slice(0, 28) + '…' : displayName(pendingDelete)}」？`}
+        detail="音轨、初稿、分段稿和文章会一起删除，不能撤销。"
+        confirmLabel="删除"
+        danger
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => void confirmDelete()}
+      />}
       {loginOpen && <OwnerLogin onClose={() => setLoginOpen(false)} onLoggedIn={async () => { setLoginOpen(false); setSession(await getSession()); await refresh(); }} />}
       {toast && <button type="button" className={`toast${toastLeaving ? ' leaving' : ''}`} onClick={dismissToast}>{toast}</button>}
     </div>

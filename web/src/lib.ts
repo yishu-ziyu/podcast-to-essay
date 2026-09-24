@@ -74,6 +74,13 @@ export function displayName(ep: Episode) {
   return '未命名';
 }
 
+export function sourceLabel(ep: Episode) {
+  if (ep.sourceUrl) {
+    try { return new URL(ep.sourceUrl).hostname.replace(/^www\./, ''); } catch { return '链接素材'; }
+  }
+  return ep.originalName || ep.source || '音轨';
+}
+
 export function displayDate(ep: Episode) {
   const m = ep.slug.match(/^(\d{4}-\d{2}-\d{2})/);
   return m ? m[1] : '';

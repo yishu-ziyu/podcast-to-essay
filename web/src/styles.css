@@ -44,8 +44,8 @@ button { -webkit-tap-highlight-color: transparent; }
 .library-head { display: flex; flex: none; align-items: center; justify-content: space-between; height: 64px; padding: 0 12px 0 20px; }
 .library-head span { font-size: 14px; font-weight: 600; }
 .library-head b { margin-left: 8px; color: var(--muted); font-weight: 500; }
-.library-close { display: grid; width: 44px; height: 44px; place-items: center; border: 0; border-radius: 10px; background: transparent; color: var(--muted); cursor: pointer; font-size: 15px; }
-.library-close:hover { background: var(--surface); color: var(--ink); }
+.library-close, .gate-close { display: grid; width: 44px; height: 44px; place-items: center; border: 0; border-radius: 10px; background: transparent; color: var(--muted); cursor: pointer; font-size: 15px; }
+.library-close:hover, .gate-close:hover { background: var(--surface); color: var(--ink); }
 .app-header { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; height: 64px; padding: 0 28px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--canvas) 90%, white); }
 .wordmark { justify-self: start; padding: 0; border: 0; background: transparent; color: var(--ink); cursor: pointer; font: 500 19px var(--serif); letter-spacing: -.06em; }
 .header-context { color: var(--muted); font: 11px var(--mono); letter-spacing: .06em; }
@@ -160,6 +160,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .gate input { height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: 9px; outline: none; background: var(--surface-soft); color: var(--ink); }
 .gate input:focus { border-color: var(--accent); background: var(--surface); }
 .gate.confirm { width: min(400px, 90vw); gap: 8px; }
+.gate-head { display: flex; align-items: center; justify-content: space-between; margin: -10px -12px 0 0; }
 .gate.confirm b { font-size: 15px; }
 .gate.confirm p { margin: 0 0 12px; color: var(--muted); font-size: 13px; line-height: 1.6; }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
@@ -167,6 +168,8 @@ button { -webkit-tap-highlight-color: transparent; }
 .button.primary:hover { background: var(--accent-hover); }
 .button.primary:active { background: var(--accent-active); transform: translateY(1px); }
 .button.large { min-width: 118px; height: 44px; }
+.button.danger { height: 44px; padding: 0 16px; background: var(--danger); color: white; white-space: nowrap; }
+.button.danger:hover { background: #9e3540; }
 .button.quiet { height: 44px; padding: 0 13px; background: var(--surface-soft); color: var(--ink); }
 .button.quiet:hover { background: #ebe7e1; }
 .button.quiet:active { background: #e5e0d9; transform: translateY(1px); }
@@ -202,13 +205,18 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
 .ep-title { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; font-size: 12px; font-weight: 550; line-height: 1.35; }
 .ep-meta { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
 .btn-del { position: absolute; top: 8px; right: 5px; width: 24px; height: 24px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; font-size: 16px; opacity: 0; }
-.episode-list li:hover .btn-del { opacity: 1; }
+.episode-list li:hover .btn-del, .btn-del:focus-visible { opacity: 1; }
+/* No hover on touch screens: keep delete reachable. */
+@media (hover: none) { .btn-del { opacity: 1; } }
 .btn-del:hover { background: #f7e5e6; color: var(--danger); }
 
 .reader { width: min(900px, 100%); margin: 0 auto; }
 .reader-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 32px; padding: 0 0 24px; border-bottom: 1px solid var(--line); }
 .reader-title { min-width: 0; }
 .reader h1 { max-width: 34ch; font-size: clamp(28px, 3.4vw, 38px); line-height: 1.2; text-wrap: balance; }
+.title-edit { padding: 0; border: 0; background: transparent; color: inherit; cursor: text; font: inherit; letter-spacing: inherit; text-align: left; text-decoration: underline dotted transparent; text-underline-offset: .18em; transition: text-decoration-color .15s var(--ease); }
+.title-edit:hover { text-decoration-color: var(--muted); }
+.title-input { width: 100%; padding: 0; border: 0; border-bottom: 1px solid var(--accent); outline: none; background: transparent; color: var(--ink); font: inherit; letter-spacing: inherit; }
 .reader-meta { margin: 12px 0 0; color: var(--muted); font-size: 12px; }
 .reader-actions { display: flex; gap: 6px; flex: 0 0 auto; }
 .reader-tabs { display: flex; gap: 16px; margin: 18px 0 38px; }
@@ -222,6 +230,12 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
 .reader-body.article p { margin: 0 0 1.35em; }
 .reader-body.article blockquote { margin: 2em 0; padding-left: 18px; border-left: 2px solid var(--accent); color: #4b443e; font-size: 20px; line-height: 1.75; }
 .reader-body.source pre { margin: 0; white-space: pre-wrap; word-break: break-word; color: #47413b; font: 12px/1.7 var(--mono); }
+.source-panel { max-width: 65ch; margin: 0 auto; }
+.source-panel .link-button { flex: none; }
+.source-facts { margin: 22px 0 0; }
+.source-facts div { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 14px; padding: 13px 2px; border-bottom: 1px solid var(--line); }
+.source-facts dt { color: var(--muted); font-size: 13px; }
+.source-facts dd { margin: 0; overflow-wrap: anywhere; font-size: 14px; }
 .reader-placeholder { color: var(--muted); font-size: 14px; }
 .source-note { max-width: 65ch; margin: -20px auto 22px; padding: 10px 12px; border-radius: 8px; background: var(--surface-soft); color: var(--muted); font-size: 11px; line-height: 1.55; }
 .verify-grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: 0; border: 1px solid var(--line); border-radius: 12px; overflow: clip; background: var(--surface); }

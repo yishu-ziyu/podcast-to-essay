@@ -77,7 +77,10 @@ test('更换音轨清空旧初稿、分段稿和分段缓存，保留标题', as
   await fsp.writeFile(path.join(dir, 'asr_raw.txt'), 'old transcript\n');
   await fsp.writeFile(path.join(dir, 'asr_raw.srt'), '1\n00:00:00,000 --> 00:03:00,000\nold\n');
   await fsp.writeFile(path.join(dir, 'transcription-state.json'), '{"state":"failed","error":"旧错误"}');
-  assert.equal((await episode(slug)).status, 'transcribed');
+  await fsp.writeFile(path.join(dir, 'asr-meta.json'), '{"model":"old-asr"}');
+  const before = await episode(slug);
+  assert.equal(before.status, 'transcribed');
+  assert.deepEqual(before.asr, { model: 'old-asr' });
 
   assert.equal((await upload(slug, 'new.m4a')).status, 200);
 
@@ -88,7 +91,26 @@ test('更换音轨清空旧初稿、分段稿和分段缓存，保留标题', as
   assert.equal(after.chunkCount, 0);
   assert.equal(after.completedChunks, 0);
   assert.equal(after.transcription, null, '旧音轨的失败状态不应带到新音轨');
+  assert.equal(after.asr, null, '旧音轨的识别模型记录应一并清掉');
   assert.equal(after.title, '我起的名字');
   assert.equal(after.originalName, 'new.m4a');
   await assert.rejects(fsp.stat(path.join(dir, 'chunks')), undefined, '旧分段缓存应被删除');
+});
+
+test('在应用里改的标题优先于 INDEX.md 登记表', async () => {
+  const slug = '2026-01-02-renamed';
+  assert.equal((await owner('/api/episodes', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ slug }),
+  })).status, 201);
+  await fsp.writeFile(path.join(DATA_ROOT, 'INDEX.md'), `| slug | 标题 | 时长 |\n|---|---|---|\n| ${slug} | 登记表里的旧标题 | 00:10:00 |\n`);
+  assert.equal((await episode(slug)).title, '登记表里的旧标题');
+
+  assert.equal((await owner(`/api/episodes/${slug}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: '新标题' }),
+  })).status, 200);
+  assert.equal((await episode(slug)).title, '新标题');
 });

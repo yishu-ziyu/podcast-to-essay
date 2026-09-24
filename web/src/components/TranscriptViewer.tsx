@@ -1,15 +1,17 @@
 import { useEffect, useState, useRef, ReactNode } from 'react';
-import { Episode, JobView, cleanEpisode, getTranscript, jobSettled, watchJob } from '../api';
-import { displayName, articleUnits, parseSrt, SrtCue } from '../lib';
+import { Episode, JobView, cleanEpisode, getTranscript, jobSettled, updateEpisodeTitle, watchJob } from '../api';
+import { displayName, articleUnits, parseSrt, sourceLabel, SrtCue } from '../lib';
+import ConfirmDialog from './ConfirmDialog';
+import EditableTitle from './EditableTitle';
 
-type Tab = 'cleaned' | 'raw' | 'srt';
+type Tab = 'cleaned' | 'raw' | 'srt' | 'source';
 
 interface Props { episode: Episode; onCleaned: () => void; onToast: (msg: string | null) => void; }
 
-const labels: Record<Tab, string> = { cleaned: '文章', raw: '初稿', srt: '分段稿' };
+const labels: Record<Tab, string> = { cleaned: '文章', raw: '初稿', srt: '分段稿', source: '素材' };
 
 function tabsFor(episode: Episode): Tab[] {
-  return ['cleaned', ...(episode.hasRaw ? ['raw' as const] : []), ...(episode.hasSrt ? ['srt' as const] : [])];
+  return ['cleaned', ...(episode.hasRaw ? ['raw' as const] : []), ...(episode.hasSrt ? ['srt' as const] : []), 'source'];
 }
 
 function renderArticle(text: string): ReactNode {
@@ -19,6 +21,26 @@ function renderArticle(text: string): ReactNode {
     if (u.kind === 'quote') return <blockquote key={`q-${i}`}>{u.text}</blockquote>;
     return <p key={`p-${i}`}>{u.text}</p>;
   });
+}
+
+function SourcePanel({ episode }: { episode: Episode }) {
+  const rows: [string, string][] = [];
+  if (episode.duration) rows.push(['时长', episode.duration]);
+  if (episode.chunkCount) rows.push(['分段', `${episode.chunkCount} 段，每段约 3 分钟`]);
+  rows.push(['来源', episode.sourceUrl ? '网页链接' : '本地文件']);
+  if (!episode.sourceUrl && episode.originalName) rows.push(['文件名', episode.originalName]);
+  if (episode.asr) rows.push(['识别', episode.asr.model]);
+  if (episode.article) rows.push(['整理', `${episode.article.model} · ${episode.article.stats.paragraphs} 段 · ${episode.article.generatedAt.slice(0, 10)}`]);
+  return (
+    <div className="source-panel">
+      <div className="source-strip">
+        <span className="source-icon">♪</span>
+        <div><b>{sourceLabel(episode)}</b><small>{displayName(episode)}</small></div>
+        {episode.sourceUrl && <a className="button quiet link-button" href={episode.sourceUrl} target="_blank" rel="noreferrer">打开原链接 ↗</a>}
+      </div>
+      <dl className="source-facts">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+    </div>
+  );
 }
 
 type ParaMap = ([number, number] | null)[] | null | undefined;
@@ -41,12 +63,15 @@ export default function TranscriptViewer({ episode, onCleaned, onToast }: Props)
   const [selPara, setSelPara] = useState<number | null>(null);
   const [selCue, setSelCue] = useState<number | null>(null);
   const [openCue, setOpenCue] = useState<number | null>(null);
+  const [confirmClean, setConfirmClean] = useState(false);
   const firstAt = useRef(episode.cleanedAt);
   const artRef = useRef<HTMLDivElement>(null);
   const segRef = useRef<HTMLDivElement>(null);
 
   const load = async (next: Tab) => {
-    setTab(next); setLoading(true);
+    setTab(next);
+    if (next === 'source') { setText(''); setLoading(false); return; }
+    setLoading(true);
     try { setText(await getTranscript(episode.slug, next)); }
     catch { setText(''); }
     finally { setLoading(false); }
@@ -84,6 +109,16 @@ export default function TranscriptViewer({ episode, onCleaned, onToast }: Props)
       onToast('重新整理失败，原文章未被覆盖。');
     }
     finally { setCleaning(false); }
+  };
+
+  const rename = async (title: string) => {
+    try {
+      await updateEpisodeTitle(episode.slug, title);
+      await onCleaned();
+    } catch (error) {
+      onToast('标题未保存：' + (error as Error).message);
+      throw error;
+    }
   };
 
   const copy = async () => {
@@ -135,8 +170,8 @@ export default function TranscriptViewer({ episode, onCleaned, onToast }: Props)
 
   return <article className="reader">
     <header className="reader-header">
-      <div className="reader-title"><p className="kicker">文章</p><h1>{displayName(episode)}</h1><p className="reader-meta">{episode.article ? `AI 整理 · ${episode.article.model} · ${episode.article.stats.paragraphs} 段 · 事实请核对原稿` : '原始素材和初稿保留备查'}</p>{fresh && <span className="chip ok blink">已更新</span>}</div>
-      <div className="reader-actions"><button type="button" className="button quiet" disabled={!episode.hasSrt} onClick={() => void toggleVerify()}>{verify ? '退出核对' : '核对'}</button><button type="button" className="button quiet" disabled={cleaning || !episode.hasRaw} onClick={clean}>{cleaning ? '整理中' : '重新整理'}</button><button type="button" className="button quiet" disabled={!text} onClick={copy}>复制</button></div>
+      <div className="reader-title"><p className="kicker">文章</p><EditableTitle value={displayName(episode)} onSave={rename} /><p className="reader-meta">{episode.article ? `AI 整理 · ${episode.article.model} · ${episode.article.stats.paragraphs} 段 · 事实请核对原稿` : '原始素材和初稿保留备查'}</p>{fresh && <span className="chip ok blink">已更新</span>}</div>
+      <div className="reader-actions"><button type="button" className="button quiet" disabled={!episode.hasSrt} onClick={() => void toggleVerify()}>{verify ? '退出核对' : '核对'}</button><button type="button" className="button quiet" disabled={cleaning || !episode.hasRaw} onClick={() => setConfirmClean(true)}>{cleaning ? '整理中' : '重新整理'}</button><button type="button" className="button quiet" disabled={!text} onClick={copy}>复制</button></div>
     </header>
     <nav className="reader-tabs" aria-label="内容版本">{tabsFor(episode).map((item) => <button key={item} type="button" className={tab === item ? 'on' : ''} onClick={() => { if (verify) exitVerify(); void load(item); }}>{labels[item]}</button>)}</nav>
     {cleanError && <div className="inline-error reader-error" role="alert"><b>重新整理失败</b><span>{cleanError}</span><small>当前显示的仍是上次保存的文章。</small></div>}
@@ -155,9 +190,16 @@ export default function TranscriptViewer({ episode, onCleaned, onToast }: Props)
           return <div key={c.index} data-cue={c.index} className={`cue${synced ? ' sync' : ''}`} onClick={() => pickCue(c)}><span className="tc">段 {String(c.index + 1).padStart(2, '0')} · {fmtTime(c.start)}</span><span className="tx">{openCue === c.index ? c.text : c.text.length > 120 ? c.text.slice(0, 120) + '…' : c.text}</span></div>;
         }) : <p className="verify-hint">暂无分段稿。</p>}</div>
       </div>
-    </div> : <div className={`reader-body ${tab === 'cleaned' ? 'article' : 'source'}`}>
+    </div> : tab === 'source' ? <SourcePanel episode={episode} /> : <div className={`reader-body ${tab === 'cleaned' ? 'article' : 'source'}`}>
       {loading ? <p className="reader-placeholder">正在打开…</p> : text ? tab === 'cleaned' ? renderArticle(text) : <pre>{text}</pre> : <p className="reader-placeholder">暂无内容。</p>}
     </div>}
+    {confirmClean && <ConfirmDialog
+      title="重新整理这篇文章？"
+      detail="会用初稿重新生成文章，消耗一次整理额度。成功后替换现在的文章；失败的话，现在的文章保持不变。"
+      confirmLabel="重新整理"
+      onCancel={() => setConfirmClean(false)}
+      onConfirm={() => { setConfirmClean(false); void clean(); }}
+    />}
   </article>;
 }
 

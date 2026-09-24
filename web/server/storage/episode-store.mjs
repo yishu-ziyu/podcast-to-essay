@@ -59,7 +59,7 @@ node "${TRANSCRIBE_MJS}" "$HERE"
     let files = [];
     try { files = await fsp.readdir(episodeDir); } catch { return; }
     for (const name of files) {
-      if (['asr_raw.txt', 'asr_raw.srt', 'asr_raw', 'chunks', 'transcription-state.json'].includes(name)
+      if (['asr_raw.txt', 'asr_raw.srt', 'asr_raw', 'asr-meta.json', 'chunks', 'transcription-state.json'].includes(name)
         || /^chunk_\d+\.(mp3|txt)$/.test(name)) {
         await fsp.rm(path.join(episodeDir, name), { recursive: true, force: true });
       }
@@ -114,6 +114,7 @@ node "${TRANSCRIBE_MJS}" "$HERE"
       const disk = await readMeta(episodeDir);
       const article = await readJSON(path.join(episodeDir, 'article-meta.json'));
       const savedState = await readJSON(path.join(episodeDir, 'transcription-state.json'));
+      const asrMeta = hasRaw ? await readJSON(path.join(episodeDir, 'asr-meta.json')) : null;
       const related = jobs
         .filter((job) => job.type === 'transcription' && job.episodeSlug === slug)
         .filter((job) => !disk?.sourceSavedAt || String(job.updatedAt) > disk.sourceSavedAt)
@@ -140,7 +141,8 @@ node "${TRANSCRIBE_MJS}" "$HERE"
       }
       out.push({
         slug,
-        title: index.title || disk?.title || disk?.originalName || null,
+        title: disk?.title || index.title || disk?.originalName || null,
+        asr: asrMeta?.model ? { model: asrMeta.model } : null,
         duration: index.duration || null,
         source,
         sourceUrl: disk?.url || null,

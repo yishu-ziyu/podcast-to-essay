@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Episode, JobError, JobView, cleanEpisode, continueJob, controlTranscription, createEpisode, getJob, jobSettled, listJobs, startTranscription, submitIngest, updateEpisodeTitle, uploadAudio, watchJob } from '../api';
-import { displayName, extractUrl, slugFromFile } from '../lib';
+import { displayName, extractUrl, slugFromFile, sourceLabel } from '../lib';
 import ConfirmDialog from './ConfirmDialog';
+import EditableTitle from './EditableTitle';
 import RecentArticles from './RecentArticles';
 
 interface Props {
@@ -13,13 +14,6 @@ interface Props {
 }
 
 const FILE_ACCEPT = ['audio/*', 'video/*', '.mp3', '.wav', '.m4a', '.flac', '.ogg', '.mp4', '.mov', '.mkv', '.webm'].join(',');
-
-function sourceLabel(episode: Episode) {
-  if (episode.sourceUrl) {
-    try { return new URL(episode.sourceUrl).hostname.replace(/^www\./, ''); } catch { return '链接素材'; }
-  }
-  return episode.originalName || episode.source || '音轨';
-}
 
 function progressText(episode: Episode) {
   if (!episode.chunkCount) return '正在准备音轨';
@@ -292,6 +286,17 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
     finally { setSavingTitle(false); }
   };
 
+  const rename = async (title: string) => {
+    if (!episode) return;
+    try {
+      await updateEpisodeTitle(episode.slug, title);
+      await onChanged();
+    } catch (error) {
+      onToast('标题未保存：' + (error as Error).message);
+      throw error;
+    }
+  };
+
   const clean = async () => {
     if (!episode?.hasRaw) return;
     setCleaning(true); setCleanFail(null);
@@ -365,7 +370,7 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
       {episode && <>
         <Journey active={activeStep} />
         <header className="session-header">
-          <div><p className="kicker">{serverState === 'interrupted' ? '转录中断' : serverState === 'failed' ? '转录失败' : episode.status === 'uploaded' ? '素材已就绪' : episode.status === 'transcribed' ? '初稿已生成' : '处理中'}</p><h1>{displayName(episode)}</h1></div>
+          <div><p className="kicker">{serverState === 'interrupted' ? '转录中断' : serverState === 'failed' ? '转录失败' : episode.status === 'uploaded' ? '素材已就绪' : episode.status === 'transcribed' ? '初稿已生成' : '处理中'}</p>{unnamed ? <h1>{displayName(episode)}</h1> : <EditableTitle value={displayName(episode)} onSave={rename} />}</div>
           <span className={`state-chip ${serverState === 'failed' || serverState === 'interrupted' ? 'failed' : isWorking ? 'active' : episode.status}`}>{isPaused ? '已暂停' : isWorking ? '转录中' : serverState === 'interrupted' ? '已中断' : serverState === 'failed' ? '转录失败' : episode.status === 'uploaded' ? '待转录' : '待整理'}</span>
         </header>
         <div className="source-strip"><span className="source-icon">♪</span><div><b>{sourceLabel(episode)}</b><small>{episode.chunkCount ? `${episode.chunkCount} 段` : '原始文件已保存'}{episode.duration ? ` · ${episode.duration}` : ''}</small></div>{!isWorking && <button type="button" className="text-button" onClick={replaceSource}>更换</button>}</div>

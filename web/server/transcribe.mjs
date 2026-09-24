@@ -112,6 +112,7 @@ async function main() {
   const srt = rows.map(({ start, text }, i) => `${i + 1}\n${timestamp(start)} --> ${timestamp(start + 180)}\n${text}`).join('\n\n');
   await fs.writeFile(path.join(dir, 'asr_raw.txt'), raw + '\n', 'utf8');
   await fs.writeFile(path.join(dir, 'asr_raw.srt'), srt + '\n', 'utf8');
+  await fs.writeFile(path.join(dir, 'asr-meta.json'), JSON.stringify({ model: asrModel }), 'utf8');
   console.log('✅ 转录完成');
 }
 
