@@ -1,62 +1,38 @@
-# podcast-to-essay
+# 誊清
 
-> 奕枢的播客转录工作流
-> 启动：2026-06-24 ｜ 2026-08-20：产品流程扩展为“素材 → 初稿 → 文章”
+把视频或播客整理成一篇可读、可核对的文章。
 
-## 定位
+线上地址：<https://lcw.yishuziyu.cn>（未登录为游客，每天有导入 / 转录 / 整理额度；数据仅本人可见）
 
-**把音频或视频保存、转录，再整理成一篇可核对的文章。**
+## 它做什么
 
-每条播客 / 短视频 / 长音频进入后，原始素材和 ASR 初稿保存在 `raw/<slug>/`，通过结构校验的 AI 整理稿落在 `cleaned/<slug>.md`。工作台支持音视频文件以及 B站、抖音、播客和媒体直链。
+1. **导入素材**：粘贴 B 站、抖音、YouTube、播客页面或媒体直链，或上传本地音视频文件。
+2. **转成初稿**：按约 3 分钟分段做语音识别，得到逐字初稿和分段稿，可随时暂停、断点续转。
+3. **整理成文**：用大模型把初稿整理成有标题和段落的文章；未通过结构校验的结果不会写入。
 
-## 文章标准
+每一步都由用户手动开始。原音轨、初稿、分段稿和文章都保存在同一个条目下，阅读时可以「核对」——文章段落和分段稿互相定位。
 
-- **忠于原稿**：不虚构事实、日期、任职时长或因果关系
-- **可读结构**：自然段与二级标题组织内容，不把逐字稿直接拼接成文章
-- **无 ASR 痕迹**：不含时间戳或 `Speaker 0` 等内部标签
-- **可追溯**：保留原始素材、初稿、分段稿以及生成模型元数据
-- **失败不伪装成功**：模型不可用或结构校验失败时，不产生新的 `cleaned/<slug>.md`
+## 本地运行
 
-## 目录约定
+需要 Node ≥ 18、`ffmpeg`、`yt-dlp`（≥ 2026.07.04）。
 
-```
-podcast-to-essay/
-├── README.md              # 本文件
-├── INDEX.md               # 所有期次登记表 + 状态
-├── STYLE_NOTES.md         # 风格学习笔记（仅记录你点过的风格特征，不展开成规则）
-├── raw/                   # ASR 原始产出（每期一子目录）
-│   └── <slug>/
-│       ├── source.<wav|mp3|m4a>   # 原始音频
-│       ├── chunks/                # ffmpeg 切块（可选，保留供复现）
-│       ├── asr_raw.txt            # ASR 原文（带时间戳）
-│       └── asr_raw.srt            # ASR 字幕版
-└── cleaned/               # 通过校验的文章（每期一文件）
-    └── <slug>.md
+```bash
+# 仓库根目录建 .env.local，写入 StepFun 密钥（已被 Git 忽略）
+echo 'STEP_API_KEY=...' > .env.local
+
+cd web
+npm install
+npm run dev        # 前端 :5173 + 服务端 :8787；端口被占时见 AGENTS.md
 ```
 
-**slug 命名**：`YYYY-MM-DD-节目名-主题`，如 `2026-06-24-e31-cooling-earth.md`
+本地不设 `ACCESS_PASSWORD` 时所有人都是所有者，数据写在仓库的 `raw/`、`cleaned/` 下。
 
-## 工作流（每期 3 步）
+其他命令：`npm test`（服务端与前端单测）、`npm run build`（构建前端）、`npm run electron:dev`（桌面壳，未在近期验证）。
 
-1. **raw** — 音频 → Stepfun ASR → 带时间戳原文（落 `raw/<slug>/asr_raw.txt`）
-2. **transcribed** — Stepfun ASR 生成初稿与约 3 分钟粒度的分段稿
-3. **cleaned** — `step-3.7-flash` 整理成文并通过结构校验（落 `cleaned/<slug>.md`）
+## 文档
 
-## 资产复用
+- [docs/README.md](docs/README.md) — 文档地图：架构、接口、数据格式、决策记录、问题清单、测试记录
+- [deploy/REDEPLOY.md](deploy/REDEPLOY.md) — 线上部署与现状
+- [AGENTS.md](AGENTS.md) — 给 AI 编码助手的工作规则
 
-- **ASR**：`asr-transcript-refinement` skill（v4.1+）
-- **Stepfun 默认**（用户偏好）：`stepaudio-2.5-asr`，0.15 元/小时，30x RT
-- **文章整理**：Step Plan `step-3.7-flash`
-- **本地 fallback**：`Fun-ASR-Nano GGUF`，~9x RT，0 成本
-
-## 当前进度
-
-- 2026-06-24：项目脚手架重写
-- E31（梦妮·碳基生物生存指南·82 分钟）转录完成 + cleaned 标准化
-- 朱雪怡抖音短视频 2 分钟 转录完成 + cleaned 标准化
-
-## Git
-
-仓库：[yishu-ziyu/podcast-to-essay](https://github.com/yishu-ziyu/podcast-to-essay)
-
-音轨、切块、`.env` 不入库。克隆后把音频放到 `raw/<slug>/source.*` 再跑转录。
+仓库：[yishu-ziyu/podcast-to-essay](https://github.com/yishu-ziyu/podcast-to-essay)。音轨、切块、`.env*` 不入库。

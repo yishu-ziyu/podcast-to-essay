@@ -43,9 +43,10 @@ export function normalizeArticle(content) {
 export function articleStructure(text) {
   const headings = [];
   const paragraphs = [];
+  const lineCounts = [];
   let buffer = [];
   const flush = () => {
-    if (buffer.length) paragraphs.push(buffer.join(' ').trim());
+    if (buffer.length) { paragraphs.push(buffer.join(' ').trim()); lineCounts.push(buffer.length); }
     buffer = [];
   };
 
@@ -60,7 +61,7 @@ export function articleStructure(text) {
     buffer.push(line);
   }
   flush();
-  return { headings, paragraphs };
+  return { headings, paragraphs, lineCounts };
 }
 
 export function validateArticle(content, rawLength = 0) {
@@ -126,7 +127,7 @@ export async function generateArticle({ title, rawText, env = process.env, fetch
       model: data.model || config.model,
       generatedAt: new Date().toISOString(),
       stats,
-      paraMap: validateMap(map, stats.paragraphs),
+      paraMap: validateMap(map, stats.paragraphs) || validateMap(foldLineMap(map, articleStructure(text).lineCounts), stats.paragraphs),
     },
   };
 }
@@ -140,6 +141,18 @@ export function extractMap(content) {
     if (Array.isArray(parsed)) map = parsed;
   } catch {}
   return { text: String(content || '').slice(0, m.index).trim(), map };
+}
+
+// The model often maps every line instead of every blank-line paragraph (13 ranges for
+// 4 paragraphs). When the count equals the total line count, merge each paragraph's lines.
+export function foldLineMap(map, lineCounts) {
+  if (!Array.isArray(map) || map.length !== lineCounts.reduce((sum, n) => sum + n, 0)) return null;
+  let at = 0;
+  return lineCounts.map((count) => {
+    const ranges = map.slice(at, at += count).filter((entry) => Array.isArray(entry) && entry.length === 2);
+    if (!ranges.length) return null;
+    return [Math.min(...ranges.map((entry) => Number(entry[0]))), Math.max(...ranges.map((entry) => Number(entry[1])))];
+  });
 }
 
 export function validateMap(map, paragraphCount) {

@@ -52,6 +52,8 @@ export function extFromMime(ctype) {
   return MIME_EXT[key] || '';
 }
 
+const DEAD_SHARE_LINK = '这个分享链接没有打开具体视频，可能已失效或没复制完整。请在抖音里重新复制分享链接。';
+
 function throwFailure(failure) {
   throw Object.assign(new Error(failure.userMessage), { failure, code: failure.code });
 }
@@ -80,7 +82,11 @@ async function followRedirects(href) {
     if (!location) throwFailure(makeError({ code: 'platform_refused', platform: 'douyin', stage: 'checking_url' }));
     const next = new URL(location, current);
     const checked = classifyMediaUrl(next.href);
-    if (!checked.supported && checked.kind !== 'douyin_short_link') throwFailure(failureForClassification(checked));
+    // An expired or truncated share link redirects to a non-video page (usually the Douyin home page);
+    // "this is a profile page" would mislead someone who pasted a video share.
+    if (!checked.supported && checked.kind !== 'douyin_short_link') {
+      throwFailure({ ...failureForClassification(checked), userMessage: DEAD_SHARE_LINK });
+    }
     current = checked.normalizedUrl || next.href;
   }
   throwFailure(makeError({ code: 'timeout', platform: 'douyin', stage: 'checking_url', userMessage: '短链重定向过多。请改用视频页面链接。' }));
@@ -207,7 +213,7 @@ export async function resolveSource(rawUrl) {
         ...classified,
         supported: false,
         kind: classified.kind === 'invalid_url' ? 'invalid_url' : 'unsupported_page',
-        reason: classified.reason || '这是抖音主页，不是具体视频。请打开要导入的视频，复制该视频的分享链接。',
+        reason: DEAD_SHARE_LINK,
       }));
     }
   }

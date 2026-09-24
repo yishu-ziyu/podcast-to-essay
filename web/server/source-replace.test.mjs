@@ -97,20 +97,23 @@ test('更换音轨清空旧初稿、分段稿和分段缓存，保留标题', as
   await assert.rejects(fsp.stat(path.join(dir, 'chunks')), undefined, '旧分段缓存应被删除');
 });
 
-test('在应用里改的标题优先于 INDEX.md 登记表', async () => {
+test('标题和时长都来自条目自己的 source-meta.json', async () => {
   const slug = '2026-01-02-renamed';
   assert.equal((await owner('/api/episodes', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ slug }),
   })).status, 201);
-  await fsp.writeFile(path.join(DATA_ROOT, 'INDEX.md'), `| slug | 标题 | 时长 |\n|---|---|---|\n| ${slug} | 登记表里的旧标题 | 00:10:00 |\n`);
-  assert.equal((await episode(slug)).title, '登记表里的旧标题');
+  const meta = path.join(DATA_ROOT, 'raw', slug, 'source-meta.json');
+  await fsp.writeFile(meta, JSON.stringify({ url: null, title: '旧标题', originalName: 'a.mp3', duration: '00:10:00' }));
+  assert.equal((await episode(slug)).duration, '00:10:00');
 
   assert.equal((await owner(`/api/episodes/${slug}`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ title: '新标题' }),
   })).status, 200);
-  assert.equal((await episode(slug)).title, '新标题');
+  const after = await episode(slug);
+  assert.equal(after.title, '新标题');
+  assert.equal(after.duration, '00:10:00', '改名不应丢掉时长');
 });

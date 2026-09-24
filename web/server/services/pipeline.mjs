@@ -114,10 +114,9 @@ export function createHandlers({ episodes, ingests, home }) {
         });
       }
       const disk = await episodes.readMeta(episodes.dir(job.episodeSlug));
-      const index = (await episodes.titlesFromIndex())[job.episodeSlug] || {};
       try {
         const result = await generateArticle({
-          title: index.title || disk?.title || disk?.originalName || job.episodeSlug,
+          title: disk?.title || disk?.originalName || job.episodeSlug,
           rawText,
         });
         await episodes.writeArticle(job.episodeSlug, result.text, result.meta);

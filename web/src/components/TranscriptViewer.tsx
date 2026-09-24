@@ -30,7 +30,7 @@ function SourcePanel({ episode }: { episode: Episode }) {
   rows.push(['来源', episode.sourceUrl ? '网页链接' : '本地文件']);
   if (!episode.sourceUrl && episode.originalName) rows.push(['文件名', episode.originalName]);
   if (episode.asr) rows.push(['识别', episode.asr.model]);
-  if (episode.article) rows.push(['整理', `${episode.article.model} · ${episode.article.stats.paragraphs} 段 · ${episode.article.generatedAt.slice(0, 10)}`]);
+  if (episode.article) rows.push(['整理', `${episode.article.model} · ${episode.article.stats.paragraphs} 段 · ${new Date(episode.article.generatedAt).toLocaleDateString('sv-SE')}`]);
   return (
     <div className="source-panel">
       <div className="source-strip">

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { articleConfig, articleProviderError, articleStructure, extractMap, generateArticle, minimumArticleLength, normalizeArticle, validateArticle, validateMap } from './article.mjs';
+import { articleConfig, articleProviderError, articleStructure, extractMap, foldLineMap, generateArticle, minimumArticleLength, normalizeArticle, validateArticle, validateMap } from './article.mjs';
 
 test('articleConfig refuses to run without a server-side token', () => {
   assert.throws(() => articleConfig({}), /还没有配置文章整理服务/);
@@ -93,4 +93,23 @@ test('generateArticle stores the paragraph map and keeps timestamps out of valid
   });
   assert.deepEqual(result.meta.paraMap, map);
   assert.ok(!result.text.includes('<<<MAP>>>'));
+});
+
+test('模型按行给时间区间时，按空行分段合并成段落映射', async () => {
+  assert.deepEqual(foldLineMap([[0, 3], [3, 6], null, [10, 14]], [2, 2]), [[0, 6], [10, 14]]);
+  assert.equal(foldLineMap([[0, 3], [3, 6]], [2, 2]), null, '条数对不上行数时不猜');
+
+  const line = '这是一句足够长的整理后正文，用来凑够文章的最低字数要求。';
+  const content = `## 第一节\n${line}\n${line}\n${line}\n\n${line}\n${line}\n\n## 第二节\n${line}\n${line}\n${line}`;
+  const perLine = [[0, 3], [3, 6], [6, 10], [10, 14], [14, 17], [17, 20], [20, 24], [24, 27]];
+  const result = await generateArticle({
+    title: '测试节目',
+    rawText: '逐字稿'.repeat(150),
+    env: { STEP_API_KEY: 'test-token', STEP_ARTICLE_MODEL: 'step-3.7-flash' },
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({ model: 'step-3.7-flash', choices: [{ finish_reason: 'stop', message: { content: `${content}\n\n<<<MAP>>> ${JSON.stringify(perLine)}` } }] }),
+    }),
+  });
+  assert.deepEqual(result.meta.paraMap, [[0, 10], [10, 17], [17, 27]]);
 });

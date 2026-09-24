@@ -66,27 +66,7 @@ node "${TRANSCRIBE_MJS}" "$HERE"
     }
   }
 
-  async function titlesFromIndex() {
-    let md = '';
-    try { md = await fsp.readFile(path.join(root, 'INDEX.md'), 'utf8'); } catch { return {}; }
-    const map = {};
-    for (const line of md.split('\n')) {
-      if (!line.startsWith('|')) continue;
-      const cells = line.split('|').map((cell) => cell.trim());
-      const slug = cells[1];
-      const title = cells[2];
-      const duration = cells[3];
-      if (!slug || slug === 'slug' || /^-+$/.test(slug) || !SAFE_SLUG.test(slug)) continue;
-      map[slug] = {
-        title: title && title !== '标题' ? title : null,
-        duration: duration && /^\d/.test(duration) ? duration : null,
-      };
-    }
-    return map;
-  }
-
   async function list(jobs = []) {
-    const titles = await titlesFromIndex();
     let entries = [];
     try { entries = await fsp.readdir(raw, { withFileTypes: true }); } catch { return []; }
     const out = [];
@@ -110,7 +90,6 @@ node "${TRANSCRIBE_MJS}" "$HERE"
       let cleanedAt = null;
       try { cleanedAt = (await fsp.stat(path.join(cleaned, `${slug}.md`))).mtimeMs; } catch { /* no article */ }
       const status = cleanedAt ? 'cleaned' : !source ? 'empty' : !hasRaw ? 'uploaded' : 'transcribed';
-      const index = titles[slug] || {};
       const disk = await readMeta(episodeDir);
       const article = await readJSON(path.join(episodeDir, 'article-meta.json'));
       const savedState = await readJSON(path.join(episodeDir, 'transcription-state.json'));
@@ -121,7 +100,8 @@ node "${TRANSCRIBE_MJS}" "$HERE"
         .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
       const active = related.find((job) => job.state === 'running' || job.state === 'paused' || job.state === 'queued');
       const interrupted = related.find((job) => job.state === 'interrupted');
-      const failedJob = related.find((job) => job.state === 'failed');
+      // Only the latest attempt counts: a failure followed by a successful retry is not a failure.
+      const failedJob = related[0]?.state === 'failed' ? related[0] : null;
       let transcription = null;
       if (active) transcription = { state: active.state === 'paused' ? 'paused' : 'running', error: null, jobId: active.id, diagnosticId: null };
       else if (interrupted && !hasRaw) {
@@ -131,7 +111,7 @@ node "${TRANSCRIBE_MJS}" "$HERE"
           jobId: interrupted.id,
           diagnosticId: null,
         };
-      } else if (failedJob || savedState?.state === 'failed') {
+      } else if (!hasRaw && (failedJob || savedState?.state === 'failed')) {
         transcription = {
           state: 'failed',
           error: failedJob?.error?.userMessage || savedState?.error || '转录未完成，已完成的片段已保留。',
@@ -141,9 +121,9 @@ node "${TRANSCRIBE_MJS}" "$HERE"
       }
       out.push({
         slug,
-        title: disk?.title || index.title || disk?.originalName || null,
+        title: disk?.title || disk?.originalName || null,
         asr: asrMeta?.model ? { model: asrMeta.model } : null,
-        duration: index.duration || null,
+        duration: disk?.duration || null,
         source,
         sourceUrl: disk?.url || null,
         originalName: disk?.originalName || null,
@@ -361,7 +341,6 @@ node "${TRANSCRIBE_MJS}" "$HERE"
     hasDurableResult,
     writeScript,
     writeTranscriptionState,
-    titlesFromIndex,
   };
 }
 

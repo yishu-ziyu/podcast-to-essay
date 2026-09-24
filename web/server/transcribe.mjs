@@ -53,7 +53,7 @@ async function transcribeChunk(file) {
   if (!res.ok) {
     if (res.status === 402) throw coded('transcription_quota_exhausted', '转录服务额度已用尽。补充额度后可以从这一段继续。');
     if (res.status === 401 || res.status === 403) throw coded('transcription_auth_failed', '转录服务授权失效，请检查设置后重试。');
-    throw coded('internal_error', '转录服务暂时没有响应，请稍后重试。');
+    throw Object.assign(coded('internal_error', '转录服务暂时没有响应，请稍后重试。'), { transient: true });
   }
   const events = (await res.text())
     .split('\n')
@@ -64,12 +64,33 @@ async function transcribeChunk(file) {
   for (const event of events) {
     let data;
     try { data = JSON.parse(event); } catch { continue; }
-    if (data.type === 'error') throw coded('internal_error', '转录服务返回错误。');
+    if (data.type === 'error') throw Object.assign(coded('internal_error', '转录服务返回错误。'), { transient: true });
     if (data.type === 'transcript.text.delta') text += String(data.delta || '');
     if (data.type === 'transcript.text.done') text = String(data.text || text);
   }
   if (!text.trim()) throw coded('internal_error', '转录服务没有返回文字，请重试。');
   return text.trim();
+}
+
+// A long episode is dozens of chunks; one network blip must not fail the whole job.
+// Retry only what can succeed on a second try: network errors and server-side hiccups.
+const RETRY_WAITS_MS = [2000, 5000];
+
+async function transcribeChunkWithRetry(file, label) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await transcribeChunk(file);
+    } catch (err) {
+      const transient = !err.code || err.transient;
+      if (!transient) throw err;
+      if (attempt >= RETRY_WAITS_MS.length) {
+        if (err.userMessage) throw err;
+        throw coded('internal_error', '连不上转录服务。已完成的片段已保存，稍后点「继续」即可。');
+      }
+      console.log(`${label}没有成功，${RETRY_WAITS_MS[attempt] / 1000} 秒后重试…`);
+      await new Promise((resolve) => setTimeout(resolve, RETRY_WAITS_MS[attempt]));
+    }
+  }
 }
 
 function coded(code, userMessage) {
@@ -101,7 +122,7 @@ async function main() {
     try { text = (await fs.readFile(base + '.txt', 'utf8')).trim(); } catch {}
     if (!text) {
       console.log(`正在识别 ${i + 1}/${parts.length}…`);
-      text = await transcribeChunk(path.join(chunks, part));
+      text = await transcribeChunkWithRetry(path.join(chunks, part), `第 ${i + 1} 段`);
       await fs.writeFile(base + '.txt', text, 'utf8');
     } else {
       console.log(`已保留 ${i + 1}/${parts.length}`);
