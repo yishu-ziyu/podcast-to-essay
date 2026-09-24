@@ -27,7 +27,7 @@
   - 本机 `~/.ssh/id_ed25519` 可 root 免密登录（`~/.ssh/config` 是空的，不影响）。
   - 域名 DNS 于 2026-09-17 迁到 Cloudflare；`lcw` 仍是 CNAME → Vercel。
   - 修复：nginx `server_name 121.89.90.68` 块补 `location /lcw/`（`proxy_pass http://127.0.0.1:8787/`，剥前缀；`client_max_body_size 600m`）。此前 `/lcw/` 落到 `location /` → 8080，返回 404。备份：`/root/backups/red-herring-ip-api.conf.<时间戳>`。
-  - 验证：从云主机走公网 `GET https://lcw.yishuziyu.cn/` → 200，标题「录成文」；`/assets/*` 200；`/api/health` 200；6MB POST 未被 Vercel 网关拦截。
+  - 验证：从云主机走公网 `GET https://lcw.yishuziyu.cn/` → 200，标题「誊清」；`/assets/*` 200；`/api/health` 200；6MB POST 未被 Vercel 网关拦截。
 - 更正 2026-09-05 的误判：当时 `lcw` 解析到 `198.18.0.51` 是本地代理造成的假象，云主机从未过期。
 
 ## 3. 重新部署步骤

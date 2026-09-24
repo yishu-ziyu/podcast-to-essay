@@ -132,7 +132,7 @@ export default function App() {
             >
               <span className="hamburger" aria-hidden="true"><i /><i /></span>
             </button>
-            <button type="button" className="wordmark" onClick={startNew}>录成文</button>
+            <button type="button" className="wordmark" onClick={startNew}>誊清</button>
           </div>
           <span className="header-context">{reading ? '文章' : current ? '条目' : ''}</span>
           {!session.owner
