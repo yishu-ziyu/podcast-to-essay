@@ -40,10 +40,16 @@ export default function App() {
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     setToastLeaving(false);
     setToast(msg);
+    if (!msg) return;
+    toastTimer.current = window.setTimeout(() => {
+      setToastLeaving(true);
+      toastTimer.current = window.setTimeout(() => { setToast(null); setToastLeaving(false); }, 130);
+    }, 4000);
   }, []);
 
   const dismissToast = useCallback(() => {
     if (!toast || toastLeaving) return;
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
     setToastLeaving(true);
     toastTimer.current = window.setTimeout(() => { setToast(null); setToastLeaving(false); }, 130);
   }, [toast, toastLeaving]);
@@ -64,11 +70,11 @@ export default function App() {
         return next.find((episode) => episode.status === 'uploaded' || episode.status === 'transcribed')?.slug || null;
       });
     } catch (error) {
-      setToast('资料库加载失败：' + (error as Error).message);
+      showToast('资料库加载失败：' + (error as Error).message);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [showToast]);
 
   useEffect(() => { if (session) void refresh(); }, [refresh, session]);
 
@@ -76,11 +82,11 @@ export default function App() {
     if (!confirm('删除该条目、音轨和已生成的文章？此操作不可撤销。')) return;
     try {
       await deleteEpisode(slug);
-      setToast('已删除。');
+      showToast('已删除。');
       // 列表不会自己更新：删完不刷新的话，条目仍留在资料库里，看起来像没删掉。
       await refresh();
     } catch (error) {
-      setToast('删除失败：' + (error as Error).message);
+      showToast('删除失败：' + (error as Error).message);
     }
   };
 
@@ -121,10 +127,10 @@ export default function App() {
       <main className="app-main">
         <header className="app-header">
           <button type="button" className="wordmark" onClick={startNew}>录成文</button>
-          <span className="header-context">{reading ? '文章' : current ? '条目' : '新建'}</span>
-          {session.owner
-            ? <button type="button" className="new-button" onClick={startNew}>＋ 新建</button>
-            : <button type="button" className="new-button" onClick={() => setLoginOpen(true)}>所有者登录</button>}
+          <span className="header-context">{reading ? '文章' : current ? '条目' : ''}</span>
+          {!session.owner
+            ? <button type="button" className="new-button" onClick={() => setLoginOpen(true)}>所有者登录</button>
+            : current ? <button type="button" className="new-button" onClick={startNew}>＋ 新建</button> : <span />}
         </header>
         {guest && (
           <div className="guest-banner">

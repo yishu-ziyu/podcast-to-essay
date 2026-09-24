@@ -53,6 +53,19 @@ node "${TRANSCRIBE_MJS}" "$HERE"
     }
   }
 
+  // Everything derived from the audio. transcribe.mjs reuses chunks/ when present, so a
+  // replaced source with stale chunks would keep transcribing the old recording.
+  async function clearTranscriptFiles(episodeDir) {
+    let files = [];
+    try { files = await fsp.readdir(episodeDir); } catch { return; }
+    for (const name of files) {
+      if (['asr_raw.txt', 'asr_raw.srt', 'asr_raw', 'chunks', 'transcription-state.json'].includes(name)
+        || /^chunk_\d+\.(mp3|txt)$/.test(name)) {
+        await fsp.rm(path.join(episodeDir, name), { recursive: true, force: true });
+      }
+    }
+  }
+
   async function titlesFromIndex() {
     let md = '';
     try { md = await fsp.readFile(path.join(root, 'INDEX.md'), 'utf8'); } catch { return {}; }
@@ -103,6 +116,7 @@ node "${TRANSCRIBE_MJS}" "$HERE"
       const savedState = await readJSON(path.join(episodeDir, 'transcription-state.json'));
       const related = jobs
         .filter((job) => job.type === 'transcription' && job.episodeSlug === slug)
+        .filter((job) => !disk?.sourceSavedAt || String(job.updatedAt) > disk.sourceSavedAt)
         .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
       const active = related.find((job) => job.state === 'running' || job.state === 'paused' || job.state === 'queued');
       const interrupted = related.find((job) => job.state === 'interrupted');
@@ -215,13 +229,17 @@ node "${TRANSCRIBE_MJS}" "$HERE"
       err.status = 400;
       throw err;
     }
+    const previous = await readMeta(episodeDir);
     await clearSourceFiles(episodeDir);
+    await clearTranscriptFiles(episodeDir);
     const dest = path.join(episodeDir, `source${ext || '.bin'}`);
     await writeLimited(stream, dest, maxBytes);
     await writeMeta(episodeDir, {
       originalName: originalName || path.basename(filename),
       url: null,
-      title: originalName ? originalName.replace(/\.[^.]+$/, '') : null,
+      title: previous?.title || (originalName ? originalName.replace(/\.[^.]+$/, '') : null),
+      // Job records outlive the audio; list() ignores transcription jobs older than this.
+      sourceSavedAt: new Date().toISOString(),
     });
     return path.basename(dest);
   }

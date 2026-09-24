@@ -9,7 +9,7 @@ interface Props {
   onDelete?: (slug: string) => void;
 }
 
-function statusFor(episode: Episode) {
+export function statusFor(episode: Episode) {
   if (episode.transcription?.state === 'paused') return '已暂停';
   if (episode.transcription?.state === 'running') return '转录中';
   if (episode.transcription?.state === 'failed') return '需要处理';

@@ -42,6 +42,8 @@ export default function TranscriptViewer({ episode, onCleaned, onToast }: Props)
   const [selCue, setSelCue] = useState<number | null>(null);
   const [openCue, setOpenCue] = useState<number | null>(null);
   const firstAt = useRef(episode.cleanedAt);
+  const artRef = useRef<HTMLDivElement>(null);
+  const segRef = useRef<HTMLDivElement>(null);
 
   const load = async (next: Tab) => {
     setTab(next); setLoading(true);
@@ -103,8 +105,9 @@ export default function TranscriptViewer({ episode, onCleaned, onToast }: Props)
     const i = paraMap.findIndex((r) => r && mid >= r[0] && mid <= r[1]);
     return i < 0 ? null : i;
   };
+  const exitVerify = () => { setVerify(false); setSelPara(null); setSelCue(null); setOpenCue(null); };
   const toggleVerify = async () => {
-    if (verify) { setVerify(false); setSelPara(null); setSelCue(null); setOpenCue(null); return; }
+    if (verify) { exitVerify(); return; }
     if (tab !== 'cleaned') await load('cleaned');
     setVerify(true);
     if (episode.hasSrt && !srtText) {
@@ -112,12 +115,20 @@ export default function TranscriptViewer({ episode, onCleaned, onToast }: Props)
       catch { setSrtText(''); }
     }
   };
-  const pickPara = (p: number) => { setSelPara(p); setSelCue(null); };
+  // Bring the counterpart into view; the clicked side is already on screen.
+  const behavior: ScrollBehavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+  const pickPara = (p: number) => {
+    setSelPara(p); setSelCue(null);
+    const first = cuesForPara(p)[0];
+    const el = first === undefined ? null : segRef.current?.querySelector<HTMLElement>(`[data-cue="${first}"]`);
+    if (el && segRef.current) segRef.current.scrollTo({ top: el.offsetTop - 14, behavior });
+  };
   const pickCue = (cue: SrtCue) => {
     setOpenCue((open) => (open === cue.index ? null : cue.index));
     const p = paraForCue(cue);
     if (p === null) { setSelCue(cue.index); setSelPara(null); return; }
     setSelPara(p); setSelCue(null);
+    artRef.current?.querySelector<HTMLElement>(`[data-para="${p}"]`)?.scrollIntoView({ block: 'center', behavior });
   };
 
   const units = verify ? articleUnits(text) : [];
@@ -127,21 +138,21 @@ export default function TranscriptViewer({ episode, onCleaned, onToast }: Props)
       <div className="reader-title"><p className="kicker">文章</p><h1>{displayName(episode)}</h1><p className="reader-meta">{episode.article ? `AI 整理 · ${episode.article.model} · ${episode.article.stats.paragraphs} 段 · 事实请核对原稿` : '原始素材和初稿保留备查'}</p>{fresh && <span className="chip ok blink">已更新</span>}</div>
       <div className="reader-actions"><button type="button" className="button quiet" disabled={!episode.hasSrt} onClick={() => void toggleVerify()}>{verify ? '退出核对' : '核对'}</button><button type="button" className="button quiet" disabled={cleaning || !episode.hasRaw} onClick={clean}>{cleaning ? '整理中' : '重新整理'}</button><button type="button" className="button quiet" disabled={!text} onClick={copy}>复制</button></div>
     </header>
-    <nav className="reader-tabs" aria-label="内容版本">{tabsFor(episode).map((item) => <button key={item} type="button" className={tab === item ? 'on' : ''} onClick={() => void load(item)}>{labels[item]}</button>)}</nav>
+    <nav className="reader-tabs" aria-label="内容版本">{tabsFor(episode).map((item) => <button key={item} type="button" className={tab === item ? 'on' : ''} onClick={() => { if (verify) exitVerify(); void load(item); }}>{labels[item]}</button>)}</nav>
     {cleanError && <div className="inline-error reader-error" role="alert"><b>重新整理失败</b><span>{cleanError}</span><small>当前显示的仍是上次保存的文章。</small></div>}
     {tab === 'srt' && !verify && <p className="source-note">按约 3 分钟切分，仅用于定位和核对，不可直接作为视频字幕发布。</p>}
     {verify ? <div>
       <p className="verify-hint">{paraMap ? '点击任意一段，正文与分段稿互指定位。' : '暂无段落映射：两边独立浏览，重新整理可生成映射。'}</p>
       <div className="verify-grid">
-        <div className="verify-art">{units.map((u, i) => {
+        <div className="verify-art" ref={artRef}>{units.map((u, i) => {
           if (u.kind === 'h2') return <h2 key={`h2-${i}`}>{u.text}</h2>;
           if (u.kind === 'h3') return <h3 key={`h3-${i}`}>{u.text}</h3>;
           const synced = u.para !== null && (selPara === u.para || (selCue !== null && cues[selCue] && paraForCue(cues[selCue]) === u.para));
-          return <p key={`p-${i}`} className={`ap${u.kind === 'quote' ? ' q' : ''}${synced ? ' sync' : ''}`} onClick={() => { if (u.para !== null) pickPara(u.para); }}>{u.text}</p>;
+          return <p key={`p-${i}`} data-para={u.para ?? undefined} className={`ap${u.kind === 'quote' ? ' q' : ''}${synced ? ' sync' : ''}`} onClick={() => { if (u.para !== null) pickPara(u.para); }}>{u.text}</p>;
         })}</div>
-        <div className="verify-seg">{cues.length ? cues.map((c) => {
+        <div className="verify-seg" ref={segRef}>{cues.length ? cues.map((c) => {
           const synced = selCue === c.index || (selPara !== null && cuesForPara(selPara).includes(c.index));
-          return <div key={c.index} className={`cue${synced ? ' sync' : ''}`} onClick={() => pickCue(c)}><span className="tc">段 {String(c.index + 1).padStart(2, '0')} · {fmtTime(c.start)}</span><span className="tx">{openCue === c.index ? c.text : c.text.length > 120 ? c.text.slice(0, 120) + '…' : c.text}</span></div>;
+          return <div key={c.index} data-cue={c.index} className={`cue${synced ? ' sync' : ''}`} onClick={() => pickCue(c)}><span className="tc">段 {String(c.index + 1).padStart(2, '0')} · {fmtTime(c.start)}</span><span className="tx">{openCue === c.index ? c.text : c.text.length > 120 ? c.text.slice(0, 120) + '…' : c.text}</span></div>;
         }) : <p className="verify-hint">暂无分段稿。</p>}</div>
       </div>
     </div> : <div className={`reader-body ${tab === 'cleaned' ? 'article' : 'source'}`}>

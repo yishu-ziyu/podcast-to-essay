@@ -97,6 +97,9 @@ export async function handleEpisodes(req, res, ctx) {
 
   if (method === 'POST' && parts[3] === 'audio') {
     if (!ctx.episodes.exists(slug)) return sendJSON(res, 404, { error: 'episode not found' });
+    const transcribing = ctx.jobs.all().some((job) => job.type === 'transcription' && job.episodeSlug === slug
+      && ['queued', 'running', 'paused'].includes(job.state));
+    if (transcribing) return sendJSON(res, 409, { error: '转录进行中，不能更换音轨。' });
     const rawName = String(req.headers['x-filename'] || 'source.mp3');
     let filename = rawName;
     try { filename = decodeURIComponent(rawName); } catch { /* keep the raw header */ }

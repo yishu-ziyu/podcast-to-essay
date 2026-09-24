@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Episode, JobError, JobView, cleanEpisode, continueJob, controlTranscription, createEpisode, getJob, jobSettled, listJobs, startTranscription, submitIngest, updateEpisodeTitle, uploadAudio, watchJob } from '../api';
 import { displayName, extractUrl, slugFromFile } from '../lib';
+import ConfirmDialog from './ConfirmDialog';
+import RecentArticles from './RecentArticles';
 
 interface Props {
   episode: Episode | null;
@@ -24,23 +26,19 @@ function progressText(episode: Episode) {
   return `已完成 ${episode.completedChunks} / ${episode.chunkCount} 段`;
 }
 
-const JOURNEY = [
-  { title: '导入素材', detail: '链接或本地文件。' },
-  { title: '转成初稿', detail: '生成逐字稿，可随时暂停。' },
-  { title: '整理成文', detail: '生成文章，逐字稿保留备查。' },
-];
+const JOURNEY = ['导入素材', '转成初稿', '整理成文'];
 
-function Journey({ active, compact = false }: { active: number; compact?: boolean }) {
+function Journey({ active }: { active: number }) {
   return (
-    <ol className={`journey${compact ? ' compact' : ''}`} aria-label="从素材到文章的三个步骤">
-      {JOURNEY.map((step, index) => {
+    <ol className="journey compact" aria-label="从素材到文章的三个步骤">
+      {JOURNEY.map((title, index) => {
         const number = index + 1;
         const done = number < active;
         const current = number === active;
         return (
-          <li key={step.title} className={`${done ? 'done' : ''}${current ? ' current' : ''}`} aria-current={current ? 'step' : undefined}>
+          <li key={title} className={`${done ? 'done' : ''}${current ? ' current' : ''}`} aria-current={current ? 'step' : undefined}>
             <span className="journey-index" aria-hidden="true">{done ? '✓' : number}</span>
-            <div><b>{step.title}</b>{!compact && <p>{step.detail}</p>}</div>
+            <div><b>{title}</b></div>
           </li>
         );
       })}
@@ -53,6 +51,8 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
   const lastRef = useRef<{ kind: 'file'; file: File } | { kind: 'url'; url: string } | null>(null);
   const [urlDraft, setUrlDraft] = useState('');
   const [over, setOver] = useState(false);
+  const [nudge, setNudge] = useState(false);
+  const linkRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState<string | null>(null);
   const [importFail, setImportFail] = useState<{ message: string; diagnosticId?: string; jobId?: string; continuable?: boolean } | null>(null);
@@ -64,6 +64,7 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
   const [cleanFail, setCleanFail] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState('');
   const [savingTitle, setSavingTitle] = useState(false);
+  const [confirmReplace, setConfirmReplace] = useState(false);
 
   const watchStop = useRef<(() => void) | null>(null);
 
@@ -150,6 +151,7 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
     if (!file) return;
     lastRef.current = { kind: 'file', file };
     setImporting(true); setImportFail(null); setImportProgress('正在放好你的文件…');
+    const replacing = Boolean(episode?.source && !episode.cleaned);
     try {
       let slug = episode && !episode.cleaned ? episode.slug : '';
       if (!slug) {
@@ -173,7 +175,7 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
       await uploadAudio(slug, file);
       await onChanged();
       onSelect(slug);
-      onToast('素材已导入。');
+      onToast(replacing ? '音轨已更换，需要重新转录。' : '素材已导入。');
     } catch (error) {
       setImportFail({ message: (error as Error).message || '上传失败' });
     } finally {
@@ -274,6 +276,12 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
     } finally { setControlling(false); }
   };
 
+  // Server clears drafts and chunks on replace; only ask when there is something to lose.
+  const replaceSource = () => {
+    if (episode && (episode.hasRaw || episode.completedChunks > 0)) setConfirmReplace(true);
+    else fileRef.current?.click();
+  };
+
   const saveTitle = async () => {
     if (!episode || !titleDraft.trim()) return;
     setSavingTitle(true);
@@ -311,48 +319,56 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
     <section className={`workbench${episode ? ' has-episode' : ''}`}>
       <input ref={fileRef} type="file" accept={FILE_ACCEPT} hidden onChange={(event) => void takeFile(event.target.files?.[0])} />
 
-      {!episode && <div className="onboarding-layout">
-        <div className="welcome-copy">
-          <header className="welcome">
-            <p className="kicker">录成文</p>
-            <h1>把视频或播客整理成文章。</h1>
-            <p>原音轨、逐字稿和文章保存在同一条目下；转录和整理都需手动开始。</p>
-          </header>
-          <Journey active={1} />
-        </div>
-
-        <div className="intake-panel">
-          <div className="intake-heading">
-            <span>第 1 步</span>
-            <h2>导入素材。</h2>
-            <p>支持 B 站、抖音、播客等网页链接，或本地音视频文件。</p>
+      {!episode && <div className="home">
+        <h1 className="home-title">把视频或播客整理成文章。</h1>
+        <form
+          className={`intake-card${over ? ' over' : ''}`}
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (validDraftUrl) void takeUrl(urlDraft);
+            else { setNudge(true); linkRef.current?.focus(); }
+          }}
+          onDragOver={(event) => { event.preventDefault(); setOver(true); }}
+          onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOver(false); }}
+          onDrop={(event) => { event.preventDefault(); setOver(false); void takeFile(event.dataTransfer.files?.[0]); }}
+        >
+          <input
+            id="source-link"
+            ref={linkRef}
+            type="text"
+            inputMode="url"
+            autoComplete="off"
+            aria-label="素材链接"
+            aria-describedby="intake-hint"
+            value={urlDraft}
+            disabled={importing}
+            placeholder={over ? '松开，导入这个文件' : '粘贴 B 站、抖音、播客链接，或拖入文件'}
+            onChange={(event) => { setUrlDraft(event.target.value); setImportFail(null); setNudge(false); }}
+          />
+          <div className="intake-bar">
+            <button type="button" className="file-pick" disabled={importing} onClick={() => fileRef.current?.click()}>＋ 选择本地文件</button>
+            <span id="intake-hint" className="intake-hint error-text" aria-live="polite">
+              {urlDraft.trim() && !validDraftUrl ? '链接需以 http:// 或 https:// 开头。' : nudge ? '先粘贴链接，或选择本地文件。' : ''}
+            </span>
+            <button className="button primary" disabled={importing}>{importing ? '导入中' : '导入'}</button>
           </div>
-          <div className="composer">
-            <label htmlFor="source-link">粘贴链接</label>
-            <form onSubmit={(event) => { event.preventDefault(); void takeUrl(urlDraft); }}>
-              <input id="source-link" type="url" value={urlDraft} disabled={importing} placeholder="https://…" onChange={(event) => { setUrlDraft(event.target.value); setImportFail(null); }} />
-              <button className="button primary" disabled={importing || !validDraftUrl}>{importing ? '导入中' : '导入链接'}</button>
-            </form>
-            <p className={`field-hint${urlDraft.trim() && !validDraftUrl ? ' error-text' : ''}`} aria-live="polite">{urlDraft.trim() && !validDraftUrl ? '链接需以 http:// 或 https:// 开头。' : '\u00a0'}</p>
-            <div className="or"><span /> 或使用本地文件 <span /></div>
-            <button type="button" className={`file-drop${over ? ' over' : ''}`} disabled={importing} onClick={() => fileRef.current?.click()} onDragOver={(event) => { event.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={(event) => { event.preventDefault(); setOver(false); void takeFile(event.dataTransfer.files?.[0]); }}>
-              <b>选择或拖入音视频文件</b><small>支持 MP3、MP4、M4A、WAV 等常见格式</small>
-            </button>
-          </div>
-          <p className="control-note"><span aria-hidden="true">○</span> 导入后不会自动转录，需手动开始。</p>
-        </div>
+        </form>
+        <p className="home-steps">导入 → 转成初稿 → 整理成文<span>每一步都由你手动开始</span></p>
       </div>}
 
       {importing && <div className="notice working"><span className="spinner" /><div><b>{importProgress || '正在准备素材…'}</b><p>完成后自动加入资料库。</p></div></div>}
       {importFail && <div className="notice error" role="alert"><div><b>{importFail.continuable ? '导入中断' : '导入失败'}</b><p>{importFail.message}</p>{importFail.diagnosticId && <small className="diagnostic">诊断号 {importFail.diagnosticId}</small>}</div>{importFail.continuable && importFail.jobId ? <button type="button" className="text-button" onClick={() => void resumeInterrupted()}>继续</button> : lastRef.current && <button type="button" className="text-button" onClick={retryImport}>重试</button>}</div>}
 
+      {!episode && <RecentArticles episodes={episodes} onSelect={onSelect} />}
+
       {episode && <>
-        <Journey active={activeStep} compact />
+        <Journey active={activeStep} />
         <header className="session-header">
           <div><p className="kicker">{serverState === 'interrupted' ? '转录中断' : serverState === 'failed' ? '转录失败' : episode.status === 'uploaded' ? '素材已就绪' : episode.status === 'transcribed' ? '初稿已生成' : '处理中'}</p><h1>{displayName(episode)}</h1></div>
           <span className={`state-chip ${serverState === 'failed' || serverState === 'interrupted' ? 'failed' : isWorking ? 'active' : episode.status}`}>{isPaused ? '已暂停' : isWorking ? '转录中' : serverState === 'interrupted' ? '已中断' : serverState === 'failed' ? '转录失败' : episode.status === 'uploaded' ? '待转录' : '待整理'}</span>
         </header>
-        <div className="source-strip"><span className="source-icon">♪</span><div><b>{sourceLabel(episode)}</b><small>{episode.chunkCount ? `${episode.chunkCount} 段` : '原始文件已保存'}{episode.duration ? ` · ${episode.duration}` : ''}</small></div><button type="button" className="text-button" onClick={() => fileRef.current?.click()}>更换</button></div>
+        <div className="source-strip"><span className="source-icon">♪</span><div><b>{sourceLabel(episode)}</b><small>{episode.chunkCount ? `${episode.chunkCount} 段` : '原始文件已保存'}{episode.duration ? ` · ${episode.duration}` : ''}</small></div>{!isWorking && <button type="button" className="text-button" onClick={replaceSource}>更换</button>}</div>
 
         {unnamed && <form className="title-editor" onSubmit={(event) => { event.preventDefault(); void saveTitle(); }}><label htmlFor="episode-title">先命名，再开始转录。</label><input id="episode-title" value={titleDraft} onChange={(event) => setTitleDraft(event.target.value)} placeholder="节目名 · 主题" /><button className="button quiet" disabled={savingTitle || !titleDraft.trim()}>{savingTitle ? '保存中' : '保存'}</button></form>}
 
@@ -366,9 +382,17 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
 
         {episode.status === 'uploaded' && !isWorking && episode.transcription?.state === 'interrupted' && <div className="focus-card blocked"><p className="card-eyebrow">转录中断</p><h2>任务因服务重启中断，已完成内容仍在，可以继续。</h2><p>已完成的片段会直接复用，不会重新请求转录。</p><button type="button" className="button primary" disabled={unnamed} onClick={beginTranscription}>继续</button></div>}
 
-        {episode.status === 'uploaded' && !isWorking && episode.transcription?.state === 'failed' && <div className="focus-card blocked"><p className="card-eyebrow">转录失败</p><h2>{episode.transcription.error?.includes('额度') ? '转录额度已用尽。' : '转录未完成。'}</h2><p>{episode.transcription.error || '已完成的片段已保留，可稍后继续。'}</p>{episode.transcription.diagnosticId && <small className="diagnostic">诊断号 {episode.transcription.diagnosticId}</small>}<div className="recovery-note">{episode.completedChunks > 0 ? `已保存 ${episode.completedChunks} / ${episode.chunkCount} 段，继续时从断点接续。` : `尚未完成任何片段，共 ${episode.chunkCount || 1} 段。`}</div><div className="recovery-actions">{episode.transcription.error?.includes('额度') && <a className="button quiet link-button" href="https://platform.stepfun.com/" target="_blank" rel="noreferrer">查看额度</a>}<button type="button" className="button primary" disabled={unnamed} onClick={beginTranscription}>{episode.completedChunks > 0 ? '继续' : '重试'}</button></div></div>}
+        {episode.status === 'uploaded' && !isWorking && episode.transcription?.state === 'failed' && <div className="focus-card blocked"><p className="card-eyebrow">转录失败</p><h2>{episode.transcription.error?.includes('额度') ? '转录额度已用尽。' : '转录未完成。'}</h2><p>{episode.transcription.error?.includes('额度') ? '额度恢复或充值后再继续。' : episode.transcription.error || '可以稍后继续。'}</p>{episode.transcription.diagnosticId && <small className="diagnostic">诊断号 {episode.transcription.diagnosticId}</small>}<div className="recovery-note">{episode.completedChunks > 0 ? `已保存 ${episode.completedChunks} / ${episode.chunkCount} 段，继续时从断点接续。` : `尚未完成任何片段，共 ${episode.chunkCount || 1} 段。`}</div><div className="recovery-actions">{episode.transcription.error?.includes('额度') && <a className="button quiet link-button" href="https://platform.stepfun.com/" target="_blank" rel="noreferrer">查看额度</a>}<button type="button" className="button primary" disabled={unnamed} onClick={beginTranscription}>{episode.completedChunks > 0 ? '继续' : '重试'}</button></div></div>}
 
         {episode.status === 'transcribed' && <div className="focus-card"><p className="card-eyebrow">初稿已生成</p><h2>整理成文章。</h2><p>{cleaning ? '正在整理，完成前不会覆盖已有文章。' : '初稿和分段稿保留备查；未通过结构检查的结果不会写入文章。'}</p><button type="button" className="button primary large" disabled={cleaning} onClick={clean}>{cleaning ? '整理中' : '整理成文章'}</button>{cleanFail && <div className="inline-error" role="alert"><b>未生成文章</b><span>{cleanFail}</span><small>初稿和已有文章未被覆盖。</small></div>}</div>}
+
+        {confirmReplace && <ConfirmDialog
+          title="更换音轨？"
+          detail={`会删除现有${episode.hasRaw ? '初稿和分段稿' : '已转录的片段'}，之后需要重新转录，会消耗转录额度。标题保留。`}
+          confirmLabel="更换并清空"
+          onCancel={() => setConfirmReplace(false)}
+          onConfirm={() => { setConfirmReplace(false); fileRef.current?.click(); }}
+        />}
 
         {logs.length > 0 && <details className="process-details"><summary>处理日志</summary><pre>{logs.join('\n')}</pre></details>}
       </>}
