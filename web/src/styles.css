@@ -290,6 +290,24 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
   .journey.compact .journey-index { display: none; }
 }
 
+/* First-visit guidance (components/Spotlight.tsx). Above the drawer, below dialogs. */
+.library-replay { flex: none; margin: auto 16px 16px; padding: 8px 0; border: 0; border-top: 1px solid var(--line); background: none; color: var(--muted); font-size: 13px; text-align: left; cursor: pointer; }
+.library-replay:hover { color: var(--accent); }
+.spot-layer { position: fixed; inset: 0; z-index: 40; pointer-events: none; }
+.spot-dim { position: absolute; inset: 0; background: rgba(34, 32, 30, .5); transition: clip-path .32s var(--ease); }
+.spot-ring { position: absolute; border-radius: 12px; box-shadow: 0 0 0 2px var(--accent), 0 0 0 6px color-mix(in srgb, var(--accent) 22%, transparent); transition: opacity .3s var(--ease); }
+.spot-card-pos { position: absolute; top: 0; left: 0; pointer-events: auto; transition: transform .32s var(--ease); }
+.spot-card { padding: 16px 16px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: 0 24px 60px -24px rgba(34, 32, 30, .45); opacity: 0; }
+.spot-card.in { animation: spot-in .28s var(--ease) both; }
+.spot-text { margin: 0; color: var(--ink); font-size: 14px; line-height: 1.65; animation: spot-rise .28s var(--ease) both; }
+.spot-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.spot-actions .button { min-height: 34px; padding: 0 14px; font-size: 13px; }
+.spot-progress { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.spot-skip { margin-left: auto; padding: 4px 0; border: 0; background: none; color: var(--muted); font-size: 13px; cursor: pointer; }
+.spot-skip:hover { color: var(--ink); }
+@keyframes spot-in { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes spot-rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }

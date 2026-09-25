@@ -340,6 +340,7 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
         >
           <input
             id="source-link"
+            data-tour="link"
             ref={linkRef}
             type="text"
             inputMode="url"
@@ -352,7 +353,7 @@ export default function Workbench({ episode, episodes, onChanged, onSelect, onTo
             onChange={(event) => { setUrlDraft(event.target.value); setImportFail(null); setNudge(false); }}
           />
           <div className="intake-bar">
-            <button type="button" className="file-pick" disabled={importing} onClick={() => fileRef.current?.click()}>＋ 选择本地文件</button>
+            <button type="button" className="file-pick" data-tour="file" disabled={importing} onClick={() => fileRef.current?.click()}>＋ 选择本地文件</button>
             <span id="intake-hint" className="intake-hint error-text" aria-live="polite">
               {urlDraft.trim() && !validDraftUrl ? '链接需以 http:// 或 https:// 开头。' : nudge ? '先粘贴链接，或选择本地文件。' : ''}
             </span>

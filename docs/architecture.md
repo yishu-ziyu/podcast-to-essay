@@ -48,6 +48,7 @@ cleaned/<slug>.md（文章） + raw/<slug>/article-meta.json（模型、段落�
 | `App.tsx` | 顶栏、资料库浮层、登录与删除确认、提示条 |
 | `components/Workbench.tsx` | 首页输入卡与最近文章；条目工作台（命名、转录进度、整理） |
 | `components/TranscriptViewer.tsx` | 阅读器：文章 / 初稿 / 分段稿 / 素材，核对双栏 |
+| `components/Onboarding.tsx` + `Spotlight.tsx`，`onboarding.ts` | 首次进入的 3 步巡览、第一次读文章时的「核对」提示；目标元素用 `data-tour` 标记，进度存浏览器 `localStorage`（[0010](decisions/0010-first-visit-tour.md)） |
 | `components/*` 其余 | 资料库列表、最近文章卡、确认框、可编辑标题 |
 | `api.ts` / `lib.ts` | 接口封装；文章分段（须与服务端 `articleStructure()` 一致）、SRT 解析等 |
 

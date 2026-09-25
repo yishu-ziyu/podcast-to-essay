@@ -8,7 +8,7 @@
     "dev": "node scripts/dev.mjs",
     "dev:web": "vite",
     "server": "node server/index.mjs",
-    "test": "node --test server/*.test.mjs && node --experimental-strip-types --test src/lib.test.ts",
+    "test": "node --test server/*.test.mjs && node --experimental-strip-types --test src/*.test.ts",
     "build": "vite build",
     "predeploy": "sh scripts/predeploy.sh",
     "electron": "electron .",

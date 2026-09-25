@@ -4,6 +4,7 @@ import EpisodeList from './components/EpisodeList';
 import Workbench from './components/Workbench';
 import TranscriptViewer from './components/TranscriptViewer';
 import ConfirmDialog from './components/ConfirmDialog';
+import { FirstSightHint, GuidedTour, useOnboarding } from './components/Onboarding';
 import { displayName } from './lib';
 
 function OwnerLogin({ onClose, onLoggedIn }: { onClose: () => void; onLoggedIn: () => void }) {
@@ -122,6 +123,13 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [libraryOpen, closeLibrary]);
 
+  const onboarding = useOnboarding();
+  const replayTour = () => {
+    onboarding.replayTour();
+    setSelected(null);
+    closeLibrary();
+  };
+
   const startNew = () => {
     setSelected(null);
     setLibraryOpen(false);
@@ -139,6 +147,7 @@ export default function App() {
               ref={libraryToggle}
               type="button"
               className="library-toggle"
+              data-tour="library"
               aria-label="打开资料库"
               aria-expanded={libraryOpen}
               aria-controls="library"
@@ -187,7 +196,12 @@ export default function App() {
           onSelect={(slug) => { setSelected(slug); closeLibrary(); }}
           onDelete={session.owner ? handleDelete : undefined}
         />
+        <button type="button" className="library-replay" onClick={replayTour}>重新看引导</button>
       </aside>
+
+      {/* Nothing else may sit on top: the drawer, a dialog, or the login form. */}
+      <GuidedTour seen={onboarding.seen} active={!current && !libraryOpen && !pendingDelete && !loginOpen} onSeen={onboarding.markSeen} onFinish={onboarding.finishTour} />
+      <FirstSightHint id="spot.verify" seen={onboarding.seen} active={reading && !libraryOpen && !pendingDelete && !loginOpen} onSeen={onboarding.markSeen} />
 
       {pendingDelete && <ConfirmDialog
         title={`删除「${displayName(pendingDelete).length > 28 ? displayName(pendingDelete).slice(0, 28) + '…' : displayName(pendingDelete)}」？`}
