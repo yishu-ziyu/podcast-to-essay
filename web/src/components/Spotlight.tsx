@@ -14,6 +14,8 @@ import type { Placement } from '../onboarding';
 const PAD = 8;
 const CARD_W = 320;
 const GAP = 12;
+/** The ring's 2px outline plus its 6px halo (.spot-ring box-shadow). */
+const EDGE = 8;
 
 type Rect = { x: number; y: number; w: number; h: number };
 
@@ -23,10 +25,10 @@ function measure(anchor: string): Rect | null {
   if (!el) return null;
   const r = el.getBoundingClientRect();
   if (r.width === 0 || r.height === 0 || r.right <= 0 || r.left >= window.innerWidth || r.bottom <= 0 || r.top >= window.innerHeight) return null;
-  // Keep the ring inside the window: a control in a corner would otherwise lose part of its outline.
-  const x = Math.max(3, r.left - PAD);
-  const y = Math.max(3, r.top - PAD);
-  return { x, y, w: Math.min(window.innerWidth - 3, r.right + PAD) - x, h: Math.min(window.innerHeight - 3, r.bottom + PAD) - y };
+  // Keep the ring and its halo inside the window: a control in a corner would otherwise lose part of its outline.
+  const x = Math.max(EDGE, r.left - PAD);
+  const y = Math.max(EDGE, r.top - PAD);
+  return { x, y, w: Math.min(window.innerWidth - EDGE, r.right + PAD) - x, h: Math.min(window.innerHeight - EDGE, r.bottom + PAD) - y };
 }
 
 /** The whole viewport minus the anchor's rectangle, as an even-odd polygon. */
