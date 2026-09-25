@@ -41,6 +41,14 @@
 - 验证：公网标题「誊清」，`/assets/*` 200，`/api/health` 200；游客模式横幅 36px、内容区占满（首次部署时横幅被拉高，`cd9c8eb` 修复后重部署）。
 - 部署前确认 `/data/jobs` 里没有 queued / running / paused 任务，重启不会打断转录。
 
+## 2.2 2026-09-25 部署（`665aeeb`）
+
+- 内容：核对段落定位修复、转录每段网络错误重试 2 次、网络错误中文提示、重试成功后不再显示「转录失败」、抖音失效分享链接提示、素材页日期按本地时区、去掉 INDEX.md 依赖。
+- 部署前服务目录停在 `53552db`，工作区干净；`/data/jobs` 3 个任务都是 succeeded。这次服务器能直接 `git pull --ff-only origin main`。
+- 后台构建日志 `/root/backups/deploy-20260925-1013.log`，以 `DEPLOY_DONE` 结束。
+- 验证：公网 `/api/health` 200、标题「誊清」、新资源 `index-8Rfq7EQI.js`；游客模式下失效抖音口令和 `example.com` 的提示正确，没有生成条目。见 [端到端记录](../docs/evals/2026-09-25-e2e-duration-map.md)。
+- 容器内有 `ffprobe`（5.1.9），后续时长功能可直接用。
+
 ## 3. 重新部署步骤
 
 ```bash
