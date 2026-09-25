@@ -27,7 +27,7 @@ cleaned/<slug>.md（文章） + raw/<slug>/article-meta.json（模型、段落�
 | 路由 | `routes/*.mjs` | health、auth、episodes、jobs；只做参数检查与权限，业务交给下层 |
 | 任务 | `services/job-runner.mjs` | 任务排队、状态流转、SSE 推送、服务重启后标记 `interrupted` 并可继续 |
 | 流水线 | `services/pipeline.mjs` | 三种任务的具体执行：ingest / transcription / article |
-| 导入 | `services/media-ingest.mjs` + `domain/media-url.mjs` | 链接分类（B 站 / 抖音 / 直链 / 网页 / 不支持）与下载 |
+| 导入 | `services/media-ingest.mjs` + `domain/media-url.mjs` | 链接分类（B 站 / 抖音 / 直链 / 网页 / 不支持）与下载；B 站被拒（云服务器 IP 拿到 412）时改走公开接口取第一 P 音频（[0011](decisions/0011-bilibili-api-fallback.md)） |
 | 转录 | `transcribe.mjs`（由 `raw/<slug>/transcribe.sh` 启动） | 切块、逐块识别（网络与服务端错误每块重试 2 次）、已完成的块直接复用 |
 | 成文 | `article.mjs` | 调模型（推理过程计入输出上限，`max_tokens` 100k）、拆分单换行段落、校验结构；逐字稿按块标【段N】，模型在每段开头标 `{{N-M}}`，换算成段落映射后删掉标记（[0009](decisions/0009-chunk-tag-map.md)） |
 | 存储 | `storage/*.mjs` | 条目、任务、游客额度的读写 |

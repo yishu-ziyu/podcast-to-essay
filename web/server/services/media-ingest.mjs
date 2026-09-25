@@ -6,6 +6,7 @@ import path from 'node:path';
 import { classifyMediaUrl } from '../domain/media-url.mjs';
 import { failureForClassification, failureFromUnknown, interpretExtractor, makeError } from '../domain/errors.mjs';
 import { runProcess } from '../infrastructure/process-runner.mjs';
+import { logEvent } from '../infrastructure/logger.mjs';
 
 export const MEDIA_EXT = new Set([
   '.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.wma',
@@ -145,6 +146,84 @@ async function downloadDirect(classified, dir, onProgress) {
   return { file: path.basename(dest), title };
 }
 
+const BILI_REFERER = 'https://www.bilibili.com/';
+
+// Errors carry `step` ("pagelist:412", "playurl:-352") so a refused fallback can be logged.
+async function biliApi(step, url) {
+  const response = await fetch(url, { headers: { 'user-agent': UA, referer: BILI_REFERER }, signal: AbortSignal.timeout(15000) });
+  const body = response.ok ? await response.json().catch(() => null) : null;
+  const reason = `${step}:${response.ok ? body?.code ?? 'not-json' : response.status}`;
+  const fail = (code) => { throw Object.assign(new Error(reason), { failure: makeError({ code, platform: 'bilibili', stage: 'reading_info' }), step: reason }); };
+  if (body?.code === -404 || body?.code === 62002) fail('no_media_found');
+  if (body?.code !== 0 || !body.data) fail('platform_refused');
+  return body.data;
+}
+
+// Bilibili answers HTTP 412 to its video web page from cloud-server IPs, and yt-dlp reads
+// that page first. Its public API still answers anonymously, so fetch the first part's
+// audio stream directly and remux it without re-encoding. The view API is rate-limited
+// hardest (412 even from home IPs after a few calls); pagelist and playurl keep answering,
+// so view is asked only for a multi-part video's overall title, and may fail.
+async function downloadBilibiliViaApi(classified, dir, onProgress) {
+  onProgress?.({ stage: 'reading_info', percent: null });
+  let page = classified.normalizedUrl;
+  if (/^https:\/\/b23\.tv\//.test(page)) {
+    page = (await fetch(page, { redirect: 'follow', headers: { 'user-agent': UA }, signal: AbortSignal.timeout(15000) })).url;
+  }
+  const id = page.match(/\/video\/(BV\w+|av\d+)/i)?.[1];
+  if (!id) throwFailure(makeError({ code: 'no_media_found', platform: 'bilibili', stage: 'reading_info' }));
+  const key = /^av/i.test(id) ? `aid=${id.slice(2)}` : `bvid=${id}`;
+  const pages = await biliApi('pagelist', `https://api.bilibili.com/x/player/pagelist?${key}`);
+  const first = Array.isArray(pages) ? pages[0] : null;
+  if (!first?.cid) throwFailure(makeError({ code: 'no_media_found', platform: 'bilibili', stage: 'reading_info' }));
+  const cid = first.cid;
+  let title = String(first.part || '').trim();
+  if (pages.length > 1) {
+    const series = await biliApi('view', `https://api.bilibili.com/x/web-interface/view?${key}`).then((view) => String(view.title || '').trim(), () => '');
+    if (series) title = title ? `${series} · ${title}` : series;
+  }
+  const play = await biliApi('playurl', `https://api.bilibili.com/x/player/playurl?${key}&cid=${cid}&fnval=16`);
+  const tracks = [...(play.dash?.audio || [])].sort((a, b) => a.bandwidth - b.bandwidth);
+  // 132 kbps is plenty for speech recognition and a third of the top track's size.
+  const track = tracks.find((t) => t.id === 30232) || tracks[0];
+  if (!track) throwFailure(makeError({ code: 'no_media_found', platform: 'bilibili', stage: 'reading_info' }));
+
+  onProgress?.({ stage: 'downloading_media', percent: null });
+  const temp = path.join(dir, '.bili-audio.m4s');
+  let response = null;
+  for (const url of [track.baseUrl || track.base_url, ...(track.backupUrl || track.backup_url || [])].filter(Boolean)) {
+    response = await fetch(url, { headers: { 'user-agent': UA, referer: BILI_REFERER }, signal: AbortSignal.timeout(10 * 60 * 1000) }).catch(() => null);
+    if (response?.ok && response.body) break;
+  }
+  if (!response?.ok || !response.body) {
+    throw Object.assign(new Error('audio refused'), { failure: makeError({ code: 'platform_refused', platform: 'bilibili', stage: 'downloading_media' }), step: `audio:${response?.status ?? 'network'}` });
+  }
+  const total = Number(response.headers.get('content-length') || 0);
+  if (total > MAX_BYTES) throwFailure(makeError({ code: 'file_too_large', stage: 'downloading_media', platform: 'bilibili' }));
+  const ws = fs.createWriteStream(temp);
+  let seen = 0;
+  try {
+    for await (const chunk of response.body) {
+      seen += chunk.byteLength;
+      if (seen > MAX_BYTES) throwFailure(makeError({ code: 'file_too_large', stage: 'downloading_media', platform: 'bilibili' }));
+      if (!ws.write(Buffer.from(chunk))) await new Promise((resolve) => ws.once('drain', resolve));
+      if (total) onProgress?.({ stage: 'downloading_media', percent: Math.round((seen / total) * 100) });
+    }
+    await new Promise((resolve, reject) => { ws.end(resolve); ws.on('error', reject); });
+    onProgress?.({ stage: 'extracting_audio', percent: null });
+    await runProcess(process.env.FFMPEG_BIN || 'ffmpeg', ['-v', 'error', '-y', '-i', temp, '-vn', '-c:a', 'copy', path.join(dir, 'source.m4a')], { cwd: dir, timeoutMs: 5 * 60 * 1000 });
+  } catch (err) {
+    ws.destroy();
+    await fsp.rm(path.join(dir, 'source.m4a'), { force: true });
+    if (err.failure) throw err;
+    if (err.code === 'ENOSPC') throwFailure(makeError({ code: 'disk_full', stage: 'downloading_media', platform: 'bilibili' }));
+    throw err;
+  } finally {
+    await fsp.rm(temp, { force: true });
+  }
+  return { file: 'source.m4a', title };
+}
+
 async function runYtDlp(classified, dir, home, onProgress) {
   const command = process.env.YTDLP_BIN || 'yt-dlp';
   let version = '';
@@ -191,6 +270,14 @@ async function runYtDlp(classified, dir, home, onProgress) {
     const failure = spawnErr?.code === 'timeout'
       ? makeError({ code: 'timeout', platform: classified.platform, stage: 'downloading_media' })
       : interpretExtractor(spawnErr?.output || spawnErr?.message || '', classified.platform, 'downloading_media');
+    if (classified.platform === 'bilibili' && failure.code === 'platform_refused') {
+      // If the API is refused too, the original "Bilibili refused" message is still the right one.
+      try {
+        return await downloadBilibiliViaApi(classified, dir, onProgress);
+      } catch (err) {
+        logEvent({ stage: 'bilibili_api_fallback', result: 'failed', errorCode: err.step || err.failure?.code || err.code || String(err.message).slice(0, 80) });
+      }
+    }
     throwFailure(failure);
   }
   let title = '';
