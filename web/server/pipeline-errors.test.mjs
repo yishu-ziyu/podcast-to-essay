@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DOUYIN_PAGE_MESSAGE, classifyMediaUrl } from './domain/media-url.mjs';
-import { failureForClassification, failureFromUnknown, interpretExtractor, messageFor } from './domain/errors.mjs';
+import { failureForClassification, failureFromTranscriber, failureFromUnknown, interpretExtractor, messageFor } from './domain/errors.mjs';
 import { redact } from './infrastructure/logger.mjs';
 
 const PAGE = '这是抖音主页，不是具体视频。请打开要导入的视频，复制该视频的分享链接。';
@@ -57,4 +57,22 @@ test('网络不通时给人话提示：整理文章的调用方把原始报错�
   assert.match(failure.userMessage, /网络连不上/);
   assert.doesNotMatch(failure.userMessage, /fetch failed/);
   assert.equal(failure.retryable, true);
+});
+
+test('转录失败是否可重试只由 RETRYABLE 决定，并保持现有行为', () => {
+  const quota = failureFromTranscriber({ code: 'transcription_quota_exhausted', userMessage: '转录服务额度已用尽。补充额度后可以从这一段继续。' }, '', { diagnosticId: 'job-1' });
+  assert.deepEqual(
+    { code: quota.code, retryable: quota.retryable, stage: quota.stage, diagnosticId: quota.diagnosticId },
+    { code: 'transcription_quota_exhausted', retryable: true, stage: 'transcribing', diagnosticId: 'job-1' },
+  );
+  assert.equal(quota.userMessage, '转录服务额度已用尽。补充额度后可以从这一段继续。');
+
+  assert.equal(failureFromTranscriber({ code: 'transcription_auth_failed', userMessage: '授权失效' }, '', { diagnosticId: 'j' }).retryable, false);
+  assert.equal(failureFromTranscriber({ code: 'internal_error', userMessage: '转录服务暂时没有响应' }, '', { diagnosticId: 'j' }).retryable, true);
+
+  const bare = failureFromTranscriber(null, '第 3 段转录失败', { diagnosticId: 'j' });
+  assert.equal(bare.code, 'internal_error');
+  assert.equal(bare.userMessage, '第 3 段转录失败');
+  assert.equal(bare.stage, 'transcribing');
+  assert.equal(bare.retryable, true);
 });

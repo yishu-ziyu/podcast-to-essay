@@ -22,6 +22,8 @@ const RETRYABLE = new Set([
   'timeout',
   'disk_full',
   'internal_error',
+  // Transcription resumes from the failed chunk once the quota is topped up.
+  'transcription_quota_exhausted',
 ]);
 
 // Node's fetch reports an unreachable service as TypeError('fetch failed') with the socket error in `cause`.
@@ -143,4 +145,13 @@ export function failureFromUnknown(err, { platform = 'unknown', stage = 'interna
   const fromText = codeFromExtractorText(err?.output || '');
   if (fromText) return makeError({ code: fromText, stage, platform });
   return makeError({ code: 'internal_error', stage, platform });
+}
+
+// transcribe.mjs reports a coded failure on an `@@error` line; without one, its last `❌` line is the message.
+export function failureFromTranscriber(coded, stderrTail, { diagnosticId } = {}) {
+  if (coded?.code) return makeError({ code: coded.code, userMessage: coded.userMessage, stage: 'transcribing', diagnosticId });
+  return failureFromUnknown(
+    Object.assign(new Error(stderrTail || '转录没有完成'), { code: 'internal_error', userMessage: stderrTail || '转录未完成，已完成的片段已保留。' }),
+    { stage: 'transcribing' },
+  );
 }

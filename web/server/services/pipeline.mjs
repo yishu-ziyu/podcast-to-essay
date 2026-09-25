@@ -1,7 +1,7 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { failureFromUnknown } from '../domain/errors.mjs';
+import { failureFromTranscriber, failureFromUnknown } from '../domain/errors.mjs';
 import { ingestUrl } from './media-ingest.mjs';
 import { generateArticle } from '../article.mjs';
 
@@ -87,18 +87,7 @@ export function createHandlers({ episodes, ingests, home }) {
         child.on('error', () => resolve(1));
       });
       if (code !== 0) {
-        const failure = coded?.code
-          ? {
-            code: coded.code,
-            userMessage: coded.userMessage,
-            retryable: coded.code === 'transcription_quota_exhausted' || coded.code === 'internal_error',
-            stage: 'transcribing',
-            diagnosticId: job.id,
-          }
-          : failureFromUnknown(
-            Object.assign(new Error(stderrTail || '转录没有完成'), { code: 'internal_error', userMessage: stderrTail || '转录未完成，已完成的片段已保留。' }),
-            { stage: 'transcribing' },
-          );
+        const failure = failureFromTranscriber(coded, stderrTail, { diagnosticId: job.id });
         await episodes.writeTranscriptionState(job.episodeSlug, 'failed', failure.userMessage);
         throw Object.assign(new Error(failure.userMessage), { failure });
       }
