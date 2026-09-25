@@ -3,12 +3,13 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { probeDuration as ffprobeDuration } from '../infrastructure/media-probe.mjs';
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const TRANSCRIBE_MJS = path.resolve(SERVER_DIR, '..', 'transcribe.mjs');
 const SAFE_SLUG = /^[A-Za-z0-9._-]+$/;
 
-export function createEpisodeStore({ root, raw, cleaned }) {
+export function createEpisodeStore({ root, raw, cleaned, probeDuration = ffprobeDuration }) {
   function dir(slug) {
     return path.join(raw, slug);
   }
@@ -43,6 +44,12 @@ node "${TRANSCRIBE_MJS}" "$HERE"
     const tmp = `${dest}.${process.pid}.tmp`;
     await fsp.writeFile(tmp, JSON.stringify(meta, null, 2), 'utf8');
     await fsp.rename(tmp, dest);
+  }
+
+  // A new source always gets a fresh duration (or none), never the old audio's.
+  async function durationField(file) {
+    const duration = await probeDuration(file);
+    return duration ? { duration } : {};
   }
 
   async function clearSourceFiles(episodeDir) {
@@ -220,6 +227,7 @@ node "${TRANSCRIBE_MJS}" "$HERE"
       originalName: originalName || path.basename(filename),
       url: null,
       title: previous?.title || (originalName ? originalName.replace(/\.[^.]+$/, '') : null),
+      ...(await durationField(dest)),
       // Job records outlive the audio; list() ignores transcription jobs older than this.
       sourceSavedAt: new Date().toISOString(),
     });
@@ -251,7 +259,7 @@ node "${TRANSCRIBE_MJS}" "$HERE"
   }
 
   async function publishIngest({ slug, stageDir, owner, url, title, file }) {
-    await writeMeta(stageDir, { url, title: title || null, originalName: title || file });
+    await writeMeta(stageDir, { url, title: title || null, originalName: title || file, ...(await durationField(path.join(stageDir, file))) });
     await writeScript(stageDir);
     await fsp.writeFile(path.join(stageDir, 'owner.json'), JSON.stringify({ owner }, null, 2), 'utf8');
     const dest = dir(slug);
@@ -263,7 +271,7 @@ node "${TRANSCRIBE_MJS}" "$HERE"
     const episodeDir = dir(slug);
     await clearSourceFiles(episodeDir);
     await fsp.rename(path.join(stageDir, file), path.join(episodeDir, file));
-    await writeMeta(episodeDir, { url, title: title || null, originalName: title || file });
+    await writeMeta(episodeDir, { url, title: title || null, originalName: title || file, ...(await durationField(path.join(episodeDir, file))) });
     await fsp.rm(stageDir, { recursive: true, force: true });
   }
 

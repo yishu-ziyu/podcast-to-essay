@@ -16,7 +16,7 @@
 | 文件 | 谁写 | 内容 | 何时清掉 |
 |---|---|---|---|
 | `source.<ext>` | 上传 / ingest | 原始音轨或视频（不入库） | 更换音轨时 |
-| `source-meta.json` | 上传 / ingest / 改名 | `url`、`title`、`originalName`，可选 `duration`、`sourceSavedAt`。**标题和时长只从这里读** | 更换音轨时重写（保留标题） |
+| `source-meta.json` | 上传 / ingest / 改名 | `url`、`title`、`originalName`、`duration`（`HH:MM:SS`，音频落盘后用 ffprobe 读取；读不到就不写），可选 `sourceSavedAt`。**标题和时长只从这里读** | 更换音轨时重写（保留标题，时长按新音频重读） |
 | `owner.json` | 游客新建时 | 条目归属，用于游客隔离 | — |
 | `transcribe.sh` | 新建时 | 启动 `web/transcribe.mjs` 的薄包装 | — |
 | `chunks/chunk_NNN.mp3/.txt` | 转录 | 3 分钟切块与逐块结果；**存在即复用**（不入库） | 更换音轨时 |

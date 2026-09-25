@@ -14,3 +14,5 @@
 
 ## 后果
 新导入的条目目前没有时长（上传和链接导入都不写 `duration`），见 [backlog](../backlog.md)。
+
+2026-09-25 补：上传、链接导入、更换音轨时，音频落盘后用 ffprobe 读时长写入 `duration`（`web/server/infrastructure/media-probe.mjs`）。此前导入的两条（`2026-09-02-link`、`2026-09-05-…`）仍没有时长。
