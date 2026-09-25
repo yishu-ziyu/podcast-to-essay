@@ -29,7 +29,7 @@ cleaned/<slug>.md（文章） + raw/<slug>/article-meta.json（模型、段落�
 | 流水线 | `services/pipeline.mjs` | 三种任务的具体执行：ingest / transcription / article |
 | 导入 | `services/media-ingest.mjs` + `domain/media-url.mjs` | 链接分类（B 站 / 抖音 / 直链 / 网页 / 不支持）与下载 |
 | 转录 | `transcribe.mjs`（由 `raw/<slug>/transcribe.sh` 启动） | 切块、逐块识别（网络与服务端错误每块重试 2 次）、已完成的块直接复用 |
-| 成文 | `article.mjs` | 调模型、校验结构、生成段落映射（模型按行给区间时按段合并） |
+| 成文 | `article.mjs` | 调模型（推理过程计入输出上限，`max_tokens` 100k）、拆分单换行段落、校验结构；逐字稿按块标【段N】，模型在每段开头标 `{{N-M}}`，换算成段落映射后删掉标记（[0009](decisions/0009-chunk-tag-map.md)） |
 | 存储 | `storage/*.mjs` | 条目、任务、游客额度的读写 |
 | 错误 | `domain/errors.mjs` | 统一错误码与用户可见文案，每个失败带 `diagnosticId` |
 

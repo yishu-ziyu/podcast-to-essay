@@ -21,23 +21,52 @@ export function articleConfig(env = process.env) {
   return { apiKey, baseUrl, model };
 }
 
+// transcribe.mjs writes one line per ~3-minute chunk: `[HH:MM:SS,mmm] Speaker 0: text`.
+// The chunk is the finest timing the transcript has, and it is what the verify view highlights.
+export function transcriptChunks(rawText) {
+  const lines = String(rawText || '').split('\n').filter((line) => line.trim());
+  const parsed = lines.map((line) => {
+    const m = line.match(/^\[(\d{2}):(\d{2}):(\d{2})(?:,\d{3})?\]\s*(.*)$/);
+    return m ? { start: Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]), text: m[4] } : null;
+  });
+  if (!parsed.length || parsed.some((chunk) => !chunk)) return null;
+  return parsed.map((chunk, i) => ({ ...chunk, end: parsed[i + 1]?.start ?? chunk.start + 180 }));
+}
+
 export function articleMessages(title, rawText) {
+  const chunks = transcriptChunks(rawText);
+  const body = chunks
+    ? `逐字稿按约 3 分钟分段，每段以【段N】开头：\n\n${chunks.map((chunk, i) => `【段${i + 1}】${chunk.text}`).join('\n')}`
+    : rawText;
+  const mapAsk = chunks
+    ? '\n\n附加要求（只用于核对定位，程序会删除这些标记）：正文每个自然段（引用块也算）的开头写 {{N}} 或 {{N-M}}，表示这段内容来自逐字稿的第 N 段，或第 N 到第 M 段；标题行不写；判断不了写 {{?}}。例如：\n{{2-3}}这一段的正文……'
+    : '';
   return [
     { role: 'system', content: SYSTEM_PROMPT },
-    {
-      role: 'user',
-      content: `节目标题：${title || '未命名音轨'}\n\n请将下面的完整逐字稿整理成文章：\n\n${rawText}\n\n附加要求（不影响正文）：正文结束后另起一行，只输出以 <<<MAP>>> 开头的 JSON 数组，为正文每个自然段（按出现顺序、以空行分隔、不含 ##/### 标题行，引用块按一个自然段计）给出其内容在逐字稿中的起止秒数 [start, end]（根据逐字稿行首 [HH:MM:SS,mmm] 时间戳估算；无法判断填 null）。数组长度必须与自然段数一致，例如：\n<<<MAP>>> [[0, 182], [180, 375], null]`,
-    },
+    { role: 'user', content: `节目标题：${title || '未命名音轨'}\n\n请将下面的完整逐字稿整理成文章。${body}${mapAsk}` },
   ];
 }
 
 export function normalizeArticle(content) {
-  return String(content || '')
+  const text = String(content || '')
     .trim()
     .replace(/^```(?:markdown|md)?\s*/i, '')
     .replace(/\s*```$/, '')
     .replace(/^#\s+[^\n]+\n+/, '')
     .trim();
+  // The model sometimes separates paragraphs with a single newline. It never hard-wraps prose,
+  // so each line is its own paragraph; only consecutive quote lines stay one block.
+  const lines = [];
+  for (const line of text.split('\n')) {
+    const prev = lines.at(-1);
+    if (!line.trim()) {
+      if (prev) lines.push('');
+      continue;
+    }
+    if (prev && !(prev.trim().startsWith('>') && line.trim().startsWith('>'))) lines.push('');
+    lines.push(line);
+  }
+  return lines.join('\n');
 }
 
 export function articleStructure(text) {
@@ -107,7 +136,7 @@ export async function generateArticle({ title, rawText, env = process.env, fetch
       messages: articleMessages(title, rawText),
       reasoning_effort: 'low',
       temperature: 0.2,
-      max_tokens: 12_000,
+      max_tokens: 100_000,
     }),
   });
 
@@ -118,8 +147,8 @@ export async function generateArticle({ title, rawText, env = process.env, fetch
   const data = await response.json();
   const choice = data.choices?.[0];
   if (choice?.finish_reason === 'length') throw new Error('文章生成达到长度上限，未写入不完整结果。');
-  const { text: withMap, map } = extractMap(choice?.message?.content);
-  const { text, stats, lineCounts } = validateArticle(withMap, rawText.length);
+  const { text: untagged, map } = extractChunkMap(normalizeArticle(choice?.message?.content), transcriptChunks(rawText));
+  const { text, stats } = validateArticle(untagged, rawText.length);
   return {
     text,
     meta: {
@@ -127,32 +156,46 @@ export async function generateArticle({ title, rawText, env = process.env, fetch
       model: data.model || config.model,
       generatedAt: new Date().toISOString(),
       stats,
-      paraMap: validateMap(map, stats.paragraphs) || validateMap(foldLineMap(map, lineCounts), stats.paragraphs),
+      paraMap: validateMap(map, stats.paragraphs),
     },
   };
 }
 
-export function extractMap(content) {
-  const m = String(content || '').match(/<<<MAP>>>\s*(\[[\s\S]*\])\s*$/);
-  if (!m) return { text: String(content || ''), map: null };
-  let map = null;
-  try {
-    const parsed = JSON.parse(m[1]);
-    if (Array.isArray(parsed)) map = parsed;
-  } catch {}
-  return { text: String(content || '').slice(0, m.index).trim(), map };
-}
+const CHUNK_TAG = /\{\{\s*(\?|\d+(?:\s*[-–~]\s*\d+)?)\s*\}\}/g;
+const TAG_ONLY_LINE = /^(?:\{\{[^}\n]*\}\}\s*)+$/;
+const TAG_AND_SPACE = new RegExp(`${CHUNK_TAG.source}[ \\t]*`, 'g');
 
-// The model often maps every line instead of every blank-line paragraph (13 ranges for
-// 4 paragraphs). When the count equals the total line count, merge each paragraph's lines.
-export function foldLineMap(map, lineCounts) {
-  if (!Array.isArray(map) || map.length !== lineCounts.reduce((sum, n) => sum + n, 0)) return null;
-  let at = 0;
-  return lineCounts.map((count) => {
-    const ranges = map.slice(at, at += count).filter((entry) => Array.isArray(entry) && entry.length === 2);
-    if (!ranges.length) return null;
-    return [Math.min(...ranges.map((entry) => Number(entry[0]))), Math.max(...ranges.map((entry) => Number(entry[1])))];
+// Each paragraph carries its own chunk tag, so a wrong or missing tag affects only that paragraph.
+export function extractChunkMap(content, chunks) {
+  const lines = [];
+  let pending = '';
+  for (const line of String(content || '').split('\n')) {
+    const trimmed = line.trim();
+    // A tag alone on its line belongs to the paragraph that follows it.
+    if (TAG_ONLY_LINE.test(trimmed)) { pending += trimmed; continue; }
+    if (pending && trimmed && !/^#{2,3}\s/.test(trimmed)) {
+      lines.push(trimmed.startsWith('>') ? trimmed.replace(/^>\s?/, `> ${pending}`) : pending + trimmed);
+      pending = '';
+      continue;
+    }
+    lines.push(line);
+  }
+  const tagged = lines.join('\n');
+  const text = tagged.replace(TAG_AND_SPACE, '').trim();
+  if (!chunks?.length) return { text, map: null };
+
+  const map = articleStructure(tagged).paragraphs.map((paragraph) => {
+    const numbers = [];
+    for (const [, tag] of paragraph.matchAll(CHUNK_TAG)) {
+      if (tag !== '?') numbers.push(...tag.split(/\s*[-–~]\s*/).map(Number));
+    }
+    if (!numbers.length) return null;
+    const first = Math.min(...numbers);
+    const last = Math.max(...numbers);
+    if (first < 1 || last > chunks.length) return null;
+    return [chunks[first - 1].start, chunks[last - 1].end];
   });
+  return { text, map: map.some(Boolean) ? map : null };
 }
 
 export function validateMap(map, paragraphCount) {
