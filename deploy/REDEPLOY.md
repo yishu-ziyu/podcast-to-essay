@@ -49,6 +49,12 @@
 - 验证：公网 `/api/health` 200、标题「誊清」、新资源 `index-8Rfq7EQI.js`；游客模式下失效抖音口令和 `example.com` 的提示正确，没有生成条目。见 [端到端记录](../docs/evals/2026-09-25-e2e-duration-map.md)。
 - 容器内有 `ffprobe`（5.1.9），后续时长功能可直接用。
 
+## 2.3 2026-09-25 部署（`ee49264`）
+
+- 内容：条目时长写入 `source-meta.json`、整理输出上限 100k、按行拆段、段落映射改标逐字稿段号、转录可重试判断统一。只改服务端，前端资源名不变（`index-8Rfq7EQI.js`）。
+- 部署前 `/data/jobs` 无进行中任务（1 条 failed 是上一轮验证时的失效抖音链接）。服务器直接 `git pull --ff-only origin main`。日志 `/root/backups/deploy-20260925-1115.log`。
+- 验证：`/api/health` 200；容器内对线上一条音频只读跑 `probeDuration`，得到 `00:03:01`；公网游客模式失效抖音口令、`example.com` 提示正确，没有生成条目。没有在线上做游客上传（游客删不掉测试条目）。
+
 ## 3. 重新部署步骤
 
 ```bash
