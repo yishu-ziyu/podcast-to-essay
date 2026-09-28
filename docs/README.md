@@ -38,4 +38,4 @@
 - 改了接口、数据文件、流水线 → 同步改 `api.md` / `data.md` / `architecture.md`
 - 部署或服务器有变化 → `deploy/REDEPLOY.md`
 
-写作风格的个人笔记在根目录 [STYLE_NOTES.md](../STYLE_NOTES.md)，不属于产品文档。
+写作风格的个人笔记放在本地 `STYLE_NOTES.md`，不入库，也不属于产品文档。
