@@ -1,13 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["kix1"],
+  "functions": { "api/gw.js": { "maxDuration": 300 } },
   "rewrites": [
-    {
-      "source": "/",
-      "destination": "http://121.89.90.68/lcw/"
-    },
-    {
-      "source": "/:path*",
-      "destination": "http://121.89.90.68/lcw/:path*"
-    }
+    { "source": "/api/episodes/:slug/audio", "destination": "http://121.89.90.68/lcw/api/episodes/:slug/audio" },
+    { "source": "/", "destination": "/api/gw?__p=/" },
+    { "source": "/:path*", "destination": "/api/gw?__p=/:path*" }
   ]
 }
