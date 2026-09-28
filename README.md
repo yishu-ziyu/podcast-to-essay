@@ -8,7 +8,7 @@ Turn a video or podcast into a readable article you can check against the source
 
 [在线使用](https://lcw.yishuziyu.cn) · [自部署](#自部署推荐) · [文档](docs/README.md)
 
-![MIT License](https://img.shields.io/badge/license-MIT-b84d1e) ![Node ≥ 18](https://img.shields.io/badge/node-%E2%89%A518-527366) ![Docker](https://img.shields.io/badge/docker-ready-6f6b66)
+[![MIT License](docs/assets/badges/license.svg)](LICENSE) ![Node ≥ 18](docs/assets/badges/node.svg) [![Docker](docs/assets/badges/docker.svg)](#自部署推荐)
 
 </div>
 
